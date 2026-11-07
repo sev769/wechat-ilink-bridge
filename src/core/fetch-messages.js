@@ -10,6 +10,7 @@ import { listAccounts } from "../state/account-store.js";
 import { rememberContextToken } from "../state/context-token-store.js";
 import { appendMessageHistory } from "../state/message-history.js";
 import { readSeenIds, markSeenIds } from "../state/seen-store.js";
+import { clearQueuedDeliveryBlock } from "../state/delivery-queue-store.js";
 import { cacheQuoteSummaries, getQuoteSummary, summarizeForQuoteCache } from "../state/quote-cache-store.js";
 import { readSyncBuffer, writeSyncBuffer } from "../state/sync-buffer-store.js";
 import { withAccountLock } from "../state/lock.js";
@@ -201,6 +202,10 @@ export async function fetchMessages(options = {}) {
     for (const message of newMessages) {
       if (message.fromUserId && message.contextToken) {
         await rememberContextToken(stateDir, account.accountId, message.fromUserId, message.contextToken, { lock: false });
+        // A fresh inbound message proves the session is alive for this
+        // user; lift any SESSION_EXPIRED block on their queued items so
+        // the flush below can deliver them.
+        await clearQueuedDeliveryBlock(stateDir, account.accountId, message.fromUserId, { lock: false });
       }
     }
 

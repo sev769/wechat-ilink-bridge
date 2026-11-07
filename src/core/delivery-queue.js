@@ -2,7 +2,7 @@ import { WxbError } from "./errors.js";
 import { chunkText } from "./chunk-text.js";
 import { generateClientId, pickServerMessageId } from "./ilink-client.js";
 import { appendMessageHistory } from "../state/message-history.js";
-import { recordTokenSend } from "../state/context-token-store.js";
+import { recordTokenSend, resolveContextToken } from "../state/context-token-store.js";
 import { cacheQuoteSummaries, summarizeForQuoteCache } from "../state/quote-cache-store.js";
 import {
   enqueueDelivery,
@@ -11,14 +11,19 @@ import {
   updateQueuedDelivery
 } from "../state/delivery-queue-store.js";
 
-function publicQueueItem(item) {
+function publicQueueItem(item, now = Date.now()) {
+  const createdAtMs = Date.parse(item.createdAt);
   return {
     id: item.id,
     userId: item.userId,
     chars: item.text.length,
     createdAt: item.createdAt,
+    ageSeconds: Number.isFinite(createdAtMs) ? Math.max(0, Math.floor((now - createdAtMs) / 1000)) : undefined,
     attempts: item.attempts,
     source: item.source,
+    status: item.blocked ? "blocked" : (item.attempts ?? 0) > 0 ? "retrying" : "pending",
+    ...(item.clientId ? { clientId: item.clientId } : {}),
+    ...(item.blocked ? { blocked: item.blocked } : {}),
     ...(item.lastAttemptAt ? { lastAttemptAt: item.lastAttemptAt } : {}),
     ...(item.lastError ? { lastError: item.lastError } : {})
   };
@@ -50,6 +55,10 @@ export async function queueTextDelivery(options = {}) {
     userId,
     text,
     source,
+    // A stable client id is assigned at enqueue time so that a later flush
+    // or manual retry re-sends with the same idempotency key instead of
+    // minting a fresh one per attempt.
+    clientId: generateClientId(),
     lastError: error
       ? {
         code: error.code ?? "UNKNOWN_ERROR",
@@ -102,6 +111,19 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
     };
   }
 
+  // Items blocked by a dead session are not retried automatically; the
+  // block is lifted when a fresh inbound message proves the session is
+  // alive again (see clearQueuedDeliveryBlock), or by a forced manual
+  // retry after re-login.
+  if (item.blocked) {
+    return {
+      status: "skipped",
+      userId: String(userId),
+      queueId: item.id,
+      reason: item.blocked
+    };
+  }
+
   if (!contextToken) {
     return {
       status: "skipped",
@@ -109,6 +131,43 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
       queueId: item.id,
       reason: "NO_CONTEXT_TOKEN"
     };
+  }
+
+  return flushQueuedDeliveryItem({
+    stateDir,
+    account,
+    item,
+    contextToken,
+    client,
+    config,
+    timeoutMs
+  });
+}
+
+export async function flushQueuedDeliveryItem(options = {}) {
+  const {
+    stateDir,
+    account,
+    item,
+    contextToken,
+    client,
+    config = {},
+    timeoutMs = config.fetchTimeoutMs
+  } = options;
+
+  if (!stateDir || !account?.accountId || !item?.id || !client) {
+    throw new TypeError("stateDir, account, item, and client are required");
+  }
+
+  // Guarantee a stable idempotency key before the first attempt so retries
+  // of this item (automatic or manual) reuse the same client ids.
+  let baseClientId = item.clientId;
+  if (!baseClientId) {
+    baseClientId = generateClientId();
+    await updateQueuedDelivery(stateDir, account.accountId, item.id, (current) => ({
+      ...current,
+      clientId: baseClientId
+    }), { lock: false });
   }
 
   const chunks = chunkText(item.text, {
@@ -122,7 +181,7 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
   try {
     for (let index = 0; index < chunks.length; index += 1) {
       const text = chunks[index];
-      const clientId = generateClientId();
+      const clientId = index === 0 ? baseClientId : `${baseClientId}-${index + 1}`;
       const sendResponse = await client.sendTextMessage({
         token: account.token,
         toUserId: item.userId,
@@ -178,18 +237,106 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
       sent
     };
   } catch (error) {
+    const stripped = stripSecretError(error);
     await updateQueuedDelivery(stateDir, account.accountId, item.id, (current) => ({
       ...current,
       attempts: (current.attempts ?? 0) + 1,
       lastAttemptAt: new Date().toISOString(),
-      lastError: stripSecretError(error)
+      lastError: stripped,
+      // A SESSION_EXPIRED failure blocks automatic retries of this item
+      // until a fresh inbound message (or a forced manual retry) proves
+      // the session is alive again.
+      ...(stripped.code === "SESSION_EXPIRED" ? { blocked: "SESSION_EXPIRED" } : {})
     }), { lock: false });
 
     return {
       status: "failed",
       userId: item.userId,
       queueId: item.id,
-      error: stripSecretError(error)
+      error: stripped
     };
   }
+}
+
+// Manual, operator-driven retry of one queued item by id. Uses the cached
+// context token for the item's user and the item's stable client id, so
+// re-sending is idempotent. Items whose session died (SESSION_EXPIRED)
+// are refused unless force is set — the expected flow is to re-login
+// first, after which the next inbound message lifts the block and the
+// automatic flush delivers the item.
+export async function retryQueuedDeliveryById(options = {}) {
+  const {
+    stateDir,
+    account,
+    queueId,
+    client,
+    config = {},
+    timeoutMs = config.fetchTimeoutMs,
+    force = false
+  } = options;
+
+  if (!stateDir || !account?.accountId || !client) {
+    throw new TypeError("stateDir, account, and client are required");
+  }
+
+  const queue = await readDeliveryQueue(stateDir, account.accountId);
+  const item = queue.find((entry) => entry.id === String(queueId));
+
+  if (!item) {
+    throw new WxbError("QUEUE_ITEM_NOT_FOUND", `No queued delivery with id: ${queueId}`, {
+      retryable: false,
+      details: { queueId: String(queueId) }
+    });
+  }
+
+  const sessionBlocked = item.blocked === "SESSION_EXPIRED" || item.lastError?.code === "SESSION_EXPIRED";
+  if (sessionBlocked && !force) {
+    throw new WxbError("QUEUE_ITEM_SESSION_EXPIRED", "This queued delivery belongs to an expired login session. Re-login first; the next inbound message will then flush it automatically. Use --force to retry anyway.", {
+      retryable: false,
+      details: { queueId: item.id, userId: item.userId }
+    });
+  }
+
+  if (item.blocked && force) {
+    await updateQueuedDelivery(stateDir, account.accountId, item.id, (current) => {
+      const { blocked, ...rest } = current;
+      return rest;
+    }, { lock: false });
+    delete item.blocked;
+  }
+
+  const contextToken = await resolveContextToken(stateDir, account.accountId, item.userId);
+  if (!contextToken) {
+    return {
+      status: "skipped",
+      userId: item.userId,
+      queueId: item.id,
+      reason: "NO_CONTEXT_TOKEN"
+    };
+  }
+
+  return flushQueuedDeliveryItem({
+    stateDir,
+    account,
+    item,
+    contextToken,
+    client,
+    config,
+    timeoutMs
+  });
+}
+
+export async function discardQueuedDelivery(stateDir, accountId, queueId) {
+  const queue = await readDeliveryQueue(stateDir, accountId);
+  const item = queue.find((entry) => entry.id === String(queueId));
+
+  if (!item) {
+    throw new WxbError("QUEUE_ITEM_NOT_FOUND", `No queued delivery with id: ${queueId}`, {
+      retryable: false,
+      details: { queueId: String(queueId) }
+    });
+  }
+
+  await removeQueuedDelivery(stateDir, accountId, item.id);
+  return publicQueueItem(item);
 }

@@ -45,6 +45,8 @@ async function enqueueDeliveryUnlocked(stateDir, accountId, delivery, options = 
     createdAt: delivery.createdAt ?? new Date().toISOString(),
     attempts: delivery.attempts ?? 0,
     source: delivery.source ?? "send",
+    ...(delivery.clientId ? { clientId: delivery.clientId } : {}),
+    ...(delivery.blocked ? { blocked: delivery.blocked } : {}),
     ...(delivery.lastAttemptAt ? { lastAttemptAt: delivery.lastAttemptAt } : {}),
     ...(delivery.lastError ? { lastError: delivery.lastError } : {})
   };
@@ -109,4 +111,32 @@ export async function clearDeliveryQueue(stateDir, accountId, options = {}) {
   }
 
   return withAccountLock(stateDir, accountId, () => clearDeliveryQueueUnlocked(stateDir, accountId, options));
+}
+
+async function clearQueuedDeliveryBlockUnlocked(stateDir, accountId, userId) {
+  const items = await readDeliveryQueue(stateDir, accountId);
+  let cleared = 0;
+  const nextItems = items.map((item) => {
+    if (item.userId !== String(userId) || !item.blocked) {
+      return item;
+    }
+    cleared += 1;
+    const { blocked, ...rest } = item;
+    return rest;
+  });
+  if (cleared > 0) {
+    await writeDeliveryQueue(stateDir, accountId, nextItems);
+  }
+  return cleared;
+}
+
+// A fresh inbound message (and its fresh context token) proves the session
+// is alive again for that user, so any SESSION_EXPIRED block recorded on
+// their queued items is lifted and automatic flush may proceed.
+export async function clearQueuedDeliveryBlock(stateDir, accountId, userId, options = {}) {
+  if (options.lock === false) {
+    return clearQueuedDeliveryBlockUnlocked(stateDir, accountId, userId);
+  }
+
+  return withAccountLock(stateDir, accountId, () => clearQueuedDeliveryBlockUnlocked(stateDir, accountId, userId));
 }

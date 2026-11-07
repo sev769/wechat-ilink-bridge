@@ -31,7 +31,7 @@ function help() {
       poll: "Run repeated foreground fetch loops for keepalive and local processing",
       heartbeat: "Run one scheduled keepalive fetch without a daemon",
       alias: "Manage readable aliases for opaque user IDs",
-      queue: "Inspect or clear delayed delivery queue items",
+      queue: "Inspect, retry, discard, or clear delayed delivery queue items",
       cleanup: "Prune local message history and inbox attachments"
     }
   });
