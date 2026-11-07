@@ -62,7 +62,7 @@ WeChat-iLink Bridge（`wxb`）是一个面向 AI Agent 的微信 iLink 本地桥
 
 ## Patched 版新增（基于原版 cherry-pick lyrnoxfan Fork 的 5 个提交）
 
-- `wxb send --voice <path>`：发送语音消息，支持 mp3/wav/m4a/amr/ogg/silk。非 SILK 音频会自动转码为 SILK 并带上时长（`voice_item.playtime`）。
+- `wxb send --voice <path>`：发送音频，支持 mp3/wav/m4a/amr/ogg/silk。**默认以文件附件形式投递**（结果 JSON 的 `kind` 为 `file`、`delivery` 为 `file`）：iLink 服务端会静默丢弃机器人发出的原生语音条（VOICE item），文件附件是实测可达的投递方式。只有显式加 `--native-voice` 时才发原生 SILK 语音条（自动转码并带上时长 `voice_item.playtime`），此时结果 `kind` 为 `voice`、`delivery` 为 `native-voice`。
 - 语音转码依赖外部工具，缺一不可：`ffmpeg`、`ffprobe` 在 PATH 中；SILK 编码器按以下顺序查找（原 Fork 写死的是作者本机路径，已修复）：
   1. 配置 `--silk-encoder-path <path>` / 环境变量 `WX_SILK_ENCODER_PATH` / `.env`
   2. PATH 中的 `silk-encoder`（或 `silk_encoder`）

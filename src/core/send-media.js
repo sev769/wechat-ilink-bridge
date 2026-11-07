@@ -366,7 +366,8 @@ export async function sendMedia(options = {}) {
     config = {},
     client: providedClient,
     timeoutMs = config.fetchTimeoutMs,
-    typing = false
+    typing = false,
+    nativeVoice = false
   } = options;
 
   if (!stateDir) {
@@ -380,12 +381,19 @@ export async function sendMedia(options = {}) {
     });
   }
 
+  // iLink silently discards VOICE items sent by bots (verified live and
+  // corroborated by multiple independent projects), so a voice send is
+  // delivered as a playable file attachment by default. A native SILK voice
+  // bubble is only attempted when the caller explicitly opts in with
+  // nativeVoice (--native-voice on the CLI).
+  const deliveryKind = kind === "voice" && !nativeVoice ? "file" : kind;
+
   const targetUserId = await resolveTargetUserOrAlias(stateDir, {
     userId,
     alias: options.alias
   });
   const account = await resolveSendAccount(stateDir, accountId);
-  const local = await inspectLocalMedia(filePath, kind, config);
+  const local = await inspectLocalMedia(filePath, deliveryKind, config);
   const client = providedClient ?? new IlinkClient({
     baseUrl: account.baseUrl ?? config.baseUrl,
     channelVersion: config.channelVersion
@@ -420,7 +428,7 @@ export async function sendMedia(options = {}) {
       const fileKey = randomBytes(16).toString("hex");
       const uploadRequest = buildUploadRequest({
         fileKey,
-        mediaType: mediaTypeByKind[kind],
+        mediaType: mediaTypeByKind[deliveryKind],
         targetUserId,
         local,
         encryptedBytes,
@@ -439,7 +447,7 @@ export async function sendMedia(options = {}) {
       if (!uploadUrl) {
         throw new WxbError("MEDIA_UPLOAD_URL_MISSING", "iLink did not return a media upload URL.", {
           retryable: false,
-          details: { kind, fileName: local.fileName }
+          details: { kind: deliveryKind, fileName: local.fileName }
         });
       }
 
@@ -465,12 +473,12 @@ export async function sendMedia(options = {}) {
       if (!downloadParam) {
         throw new WxbError("MEDIA_UPLOAD_PARAM_MISSING", "CDN upload did not return an encrypted media download parameter.", {
           retryable: false,
-          details: { kind, fileName: local.fileName }
+          details: { kind: deliveryKind, fileName: local.fileName }
         });
       }
 
       const item = buildMediaItem({
-        kind,
+        kind: deliveryKind,
         local,
         encryptedBytes,
         aesKeyHex,
@@ -497,7 +505,7 @@ export async function sendMedia(options = {}) {
             ...(error.details ?? {}),
             uploaded: true,
             clientId,
-            kind,
+            kind: deliveryKind,
             fileName: local.fileName
           }
         });
@@ -509,10 +517,11 @@ export async function sendMedia(options = {}) {
         fromUserId: account.ownerUserId,
         toUserId: targetUserId,
         timestamp: Math.floor(Date.now() / 1000),
-        type: kind,
+        type: deliveryKind,
         contextToken: activeContextToken,
         attachment: {
-          kind,
+          kind: deliveryKind,
+          ...(kind !== deliveryKind ? { requestedKind: kind } : {}),
           fileKey,
           fileName: local.fileName,
           mimeType: local.mimeType,
@@ -539,7 +548,9 @@ export async function sendMedia(options = {}) {
       return {
         accountId: account.accountId,
         toUserId: targetUserId,
-        kind,
+        kind: deliveryKind,
+        requestedKind: kind,
+        delivery: deliveryKind === "voice" ? "native-voice" : deliveryKind,
         clientId,
         fileName: local.fileName,
         mimeType: local.mimeType,

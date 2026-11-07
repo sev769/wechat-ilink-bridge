@@ -27,7 +27,7 @@ function help() {
       accounts: "List saved accounts without tokens",
       status: "Show local account, cursor, conversation, and history status",
       fetch: "Long-poll one batch of inbound messages, optionally downloading media, and save local state",
-      send: "Send text, files, or images to a user using cached context token",
+      send: "Send text, files, or images to a user using cached context token; --voice delivers audio as a file attachment by default (--native-voice for a native voice bubble)",
       poll: "Run repeated foreground fetch loops for keepalive and local processing",
       heartbeat: "Run one scheduled keepalive fetch without a daemon",
       alias: "Manage readable aliases for opaque user IDs",

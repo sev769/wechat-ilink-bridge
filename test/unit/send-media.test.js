@@ -331,3 +331,73 @@ test("sendMedia reports upload success metadata when sendmessage later fails", a
     assert.equal((await readMessageHistory(stateDir, "bot_media")).length, 0);
   });
 });
+
+test("sendMedia delivers voice as a file attachment by default", async () => {
+  await withTempDir(async (stateDir) => {
+    await seedAccount(stateDir);
+    const voicePath = path.join(stateDir, "note.wav");
+    const wavBytes = Buffer.from("RIFF fixture wav bytes");
+    await writeFile(voicePath, wavBytes);
+    const client = fakeMediaClient();
+
+    const result = await sendMedia({
+      stateDir,
+      userId: "user_media",
+      filePath: voicePath,
+      kind: "voice",
+      client,
+      config: { maxUploadBytes: 1024, cdnBaseUrl: "https://upload.example/c2c" }
+    });
+
+    assert.equal(result.kind, "file");
+    assert.equal(result.requestedKind, "voice");
+    assert.equal(result.delivery, "file");
+    assert.equal(result.fileName, "note.wav");
+    assert.equal(result.mimeType, "audio/wav");
+    assert.equal(result.bytes, wavBytes.length);
+    assert.equal(client.calls.getUploadUrl[0].upload.media_type, 3);
+    const item = client.calls.sendMediaMessage[0].item;
+    assert.equal(item.type, 4);
+    assert.ok(item.file_item);
+    assert.equal(item.voice_item, undefined);
+
+    const history = await readMessageHistory(stateDir, "bot_media");
+    assert.equal(history.length, 1);
+    assert.equal(history[0].type, "file");
+    assert.equal(history[0].attachment.kind, "file");
+    assert.equal(history[0].attachment.requestedKind, "voice");
+  });
+});
+
+test("sendMedia sends a native SILK voice bubble only with nativeVoice", async () => {
+  await withTempDir(async (stateDir) => {
+    await seedAccount(stateDir);
+    const voicePath = path.join(stateDir, "note.silk");
+    await writeFile(voicePath, Buffer.from("#!SILK_V3 fixture silk bytes"));
+    const client = fakeMediaClient();
+
+    const result = await sendMedia({
+      stateDir,
+      userId: "user_media",
+      filePath: voicePath,
+      kind: "voice",
+      nativeVoice: true,
+      client,
+      config: { maxUploadBytes: 1024, cdnBaseUrl: "https://upload.example/c2c" }
+    });
+
+    assert.equal(result.kind, "voice");
+    assert.equal(result.requestedKind, "voice");
+    assert.equal(result.delivery, "native-voice");
+    assert.equal(result.mimeType, "audio/silk");
+    assert.equal(client.calls.getUploadUrl[0].upload.media_type, 4);
+    const item = client.calls.sendMediaMessage[0].item;
+    assert.equal(item.type, 3);
+    assert.ok(item.voice_item);
+
+    const history = await readMessageHistory(stateDir, "bot_media");
+    assert.equal(history.length, 1);
+    assert.equal(history[0].type, "voice");
+    assert.equal(history[0].attachment.kind, "voice");
+  });
+});

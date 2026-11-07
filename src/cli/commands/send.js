@@ -27,7 +27,7 @@ function collectPositionals(argv = []) {
     }
 
     const key = entry.slice(2).split("=", 1)[0];
-    if (!entry.includes("=") && !["stdin", "json", "typing", "no-queue", "queue", "queue-on-failure"].includes(key)) {
+    if (!entry.includes("=") && !["stdin", "json", "typing", "no-queue", "queue", "queue-on-failure", "native-voice"].includes(key)) {
       index += 1;
     }
   }
@@ -76,7 +76,8 @@ export async function runSendCommand(argv, context) {
       config: context.config,
       timeoutMs: optionalNumber(flags.timeout) ?? context.config.fetchTimeoutMs,
       client: context.client,
-      typing: flags.typing === true
+      typing: flags.typing === true,
+      nativeVoice: flags.nativeVoice === true
     });
 
     return cliSuccess(result);

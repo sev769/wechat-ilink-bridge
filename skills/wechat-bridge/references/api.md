@@ -241,6 +241,7 @@ Behavior:
 - Splits long text according to configured limits.
 - Sends each chunk with a distinct `client_id`.
 - For `--file` and `--image`, reads a local file path, infers MIME, encrypts bytes with AES-128-ECB, requests an upload URL, uploads encrypted bytes, then sends the media item.
+- For `--voice`, the audio is delivered as a file attachment by default (result `kind` is `file`, `delivery` is `file`) because iLink silently discards native VOICE items sent by bots. Pass `--native-voice` to send a native SILK voice bubble instead (result `kind` is `voice`, `delivery` is `native-voice`); non-SILK audio is transcoded to SILK with its duration in that mode.
 - For `--typing`, fetches a typing ticket, sends typing start before delivery, and sends typing stop after the delivery attempt.
 - Writes successful chunks to outbound message history.
 - Returns a send summary without credential or context token values.
