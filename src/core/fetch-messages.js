@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { appendFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { WxbError } from "./errors.js";
 import { IlinkClient } from "./ilink-client.js";
 import { normalizeUpdateResponse } from "./message-normalizer.js";
@@ -13,6 +15,20 @@ import { withAccountLock } from "../state/lock.js";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Diagnostic only: when the flag file <stateDir>/raw-capture.on exists, append
+// each raw getupdates response to <stateDir>/raw-capture.jsonl before
+// normalization, so fields the normalizer drops can be inspected. Passive and
+// failure-proof by design; remove the flag file to stop capturing.
+async function maybeCaptureRawResponse(stateDir, accountId, response) {
+  try {
+    await stat(join(stateDir, "raw-capture.on"));
+    const line = `${JSON.stringify({ capturedAt: Date.now(), accountId, response })}\n`;
+    await appendFile(join(stateDir, "raw-capture.jsonl"), line, "utf8");
+  } catch {
+    // Never let a diagnostic write break fetching.
+  }
 }
 
 function stripInternalMessageFields(message) {
@@ -138,6 +154,8 @@ export async function fetchMessages(options = {}) {
     getUpdatesBuf: previousBuffer,
     timeoutMs
   }, retry);
+
+  await maybeCaptureRawResponse(stateDir, account.accountId, response);
 
   return withAccountLock(stateDir, account.accountId, async () => {
     const normalized = normalizeUpdateResponse(response, {
