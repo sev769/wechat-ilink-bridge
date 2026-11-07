@@ -88,6 +88,7 @@ function normalizeMediaItem(item, kind, payload, options) {
     width: payload.width,
     height: payload.height,
     duration: payload.duration ?? payload.duration_ms ?? payload.playtime ?? payload.play_length,
+    transcript: kind === "voice" ? asString(payload.text ?? payload.transcript ?? "") || undefined : undefined,
     ...(options.includeMediaSecrets
       ? {
         url: payload.url ?? payload.cdn_url ?? payload.download_url ?? media.full_url ?? media.url,
@@ -137,8 +138,8 @@ export function normalizeRawMessage(raw = {}, options = {}) {
   const items = (raw.item_list ?? raw.items ?? []).map((item) => normalizeItem(item, options));
   const itemKinds = [...new Set(items.map((item) => item.kind))];
   const text = items
-    .filter((item) => item.kind === "text" && item.text)
-    .map((item) => item.text)
+    .filter((item) => (item.kind === "text" && item.text) || (item.kind === "voice" && item.metadata?.transcript))
+    .map((item) => (item.kind === "text" ? item.text : item.metadata.transcript))
     .join("\n");
 
   const id = asString(firstDefined(raw, messageIdFields));

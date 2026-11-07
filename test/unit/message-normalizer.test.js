@@ -121,6 +121,37 @@ test("keeps non-text voice metadata instead of throwing", async () => {
   assert.equal(message.items[0].metadata.duration, 3200);
 });
 
+test("surfaces voice_item.text as transcript and message text when present", () => {
+  const message = normalizeRawMessage({
+    msg_id: "msg_voice_002",
+    from_user_id: "user_opaque_003",
+    item_list: [
+      {
+        type: 34,
+        voice_item: {
+          file_id: "voice_file_002",
+          duration_ms: 2500,
+          text: "你好，这是微信自带转写"
+        }
+      }
+    ],
+    timestamp: 1715000300
+  });
+
+  assert.equal(message.type, "voice");
+  assert.equal(message.items[0].metadata.transcript, "你好，这是微信自带转写");
+  assert.equal(message.text, "你好，这是微信自带转写");
+});
+
+test("voice without transcript keeps text empty and adds no transcript field", async () => {
+  const raw = await readFixture("getupdates-voice-message.json");
+  const [message] = normalizeUpdateResponse(raw).messages;
+
+  assert.equal(message.items[0].metadata.transcript, undefined);
+  assert.equal(Object.hasOwn(message.items[0].metadata, "transcript"), false);
+  assert.equal(message.text, undefined);
+});
+
 test("handles empty long-poll timeout response", async () => {
   const raw = await readFixture("getupdates-empty-timeout.json");
   const normalized = normalizeUpdateResponse(raw);
