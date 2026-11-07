@@ -1,8 +1,9 @@
 import { WxbError } from "./errors.js";
 import { chunkText } from "./chunk-text.js";
-import { generateClientId } from "./ilink-client.js";
+import { generateClientId, pickServerMessageId } from "./ilink-client.js";
 import { appendMessageHistory } from "../state/message-history.js";
 import { recordTokenSend } from "../state/context-token-store.js";
+import { cacheQuoteSummaries, summarizeForQuoteCache } from "../state/quote-cache-store.js";
 import {
   enqueueDelivery,
   readDeliveryQueue,
@@ -122,7 +123,7 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
     for (let index = 0; index < chunks.length; index += 1) {
       const text = chunks[index];
       const clientId = generateClientId();
-      await client.sendTextMessage({
+      const sendResponse = await client.sendTextMessage({
         token: account.token,
         toUserId: item.userId,
         text,
@@ -133,8 +134,21 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
 
       await recordTokenSend(stateDir, account.accountId, contextToken, 1, { lock: false });
 
+      const serverMessageId = pickServerMessageId(sendResponse, clientId);
+      if (serverMessageId) {
+        await cacheQuoteSummaries(stateDir, account.accountId, [summarizeForQuoteCache({
+          id: serverMessageId,
+          direction: "outgoing",
+          fromUserId: account.ownerUserId,
+          type: "text",
+          text,
+          timestamp: startedAt
+        }, "outgoing")], { lock: false });
+      }
+
       await appendMessageHistory(stateDir, account.accountId, {
         id: clientId,
+        ...(serverMessageId ? { serverMessageId } : {}),
         direction: "outgoing",
         fromUserId: account.ownerUserId,
         toUserId: item.userId,
@@ -149,6 +163,7 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
 
       sent.push({
         clientId,
+        ...(serverMessageId ? { serverMessageId } : {}),
         chunkIndex: index + 1,
         chars: text.length
       });

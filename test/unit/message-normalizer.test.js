@@ -160,3 +160,29 @@ test("handles empty long-poll timeout response", async () => {
   assert.equal(normalized.getUpdatesBuf, "cursor_001");
   assert.deepEqual(normalized.messages, []);
 });
+
+test("surfaces ref_msg as quote with the quoted message server id and create time", async () => {
+  const raw = await readFixture("getupdates-quote-message.json");
+  const normalized = normalizeUpdateResponse(raw);
+  const [message] = normalized.messages;
+
+  assert.equal(message.id, "7524945285671009000");
+  assert.equal(message.type, "text");
+  assert.equal(message.text, "1");
+  assert.deepEqual(message.quote, {
+    messageId: "7524943367072022152",
+    createTimeMs: 1794086306000
+  });
+  assert.deepEqual(message.items[0].quote, {
+    messageId: "7524943367072022152",
+    createTimeMs: 1794086306000
+  });
+});
+
+test("messages without ref_msg have no quote field", async () => {
+  const raw = await readFixture("getupdates-text-message.json");
+  const [message] = normalizeUpdateResponse(raw).messages;
+
+  assert.equal(Object.hasOwn(message, "quote"), false);
+  assert.equal(Object.hasOwn(message.items[0], "quote"), false);
+});

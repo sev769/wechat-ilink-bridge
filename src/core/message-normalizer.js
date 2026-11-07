@@ -63,6 +63,33 @@ function normalizeTextItem(item, payload) {
   };
 }
 
+// A quoted (referenced) message arrives as item.ref_msg.message_item and
+// carries only the quoted message's server msg_id plus its create time —
+// never the quoted content. Surface the reference so callers can resolve
+// the original from a local quote cache.
+function extractQuote(item) {
+  const ref = item?.ref_msg ?? item?.refMsg;
+  if (!ref || typeof ref !== "object") {
+    return undefined;
+  }
+
+  const refItem = ref.message_item ?? ref.messageItem ?? ref;
+  const messageId = asString(
+    refItem.msg_id ?? refItem.message_id ?? refItem.messageId ?? refItem.msgId
+  );
+  if (!messageId) {
+    return undefined;
+  }
+
+  const rawCreateTime = refItem.create_time_ms ?? refItem.createTimeMs ?? refItem.create_time ?? refItem.timestamp;
+  const createTimeMs = rawCreateTime === undefined || rawCreateTime === null ? undefined : Number(rawCreateTime);
+
+  return compactObject({
+    messageId,
+    createTimeMs: Number.isFinite(createTimeMs) ? createTimeMs : undefined
+  });
+}
+
 function compactObject(value) {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined && entryValue !== null && entryValue !== "")
@@ -118,20 +145,22 @@ function normalizeMediaItem(item, kind, payload, options) {
 export function normalizeItem(item = {}, options = {}) {
   const kind = detectItemKind(item);
   const payload = pickPayload(item, kind);
+  const quote = extractQuote(item);
 
+  let normalized;
   if (kind === "text") {
-    return normalizeTextItem(item, payload);
+    normalized = normalizeTextItem(item, payload);
+  } else if (kind === "image" || kind === "voice" || kind === "file" || kind === "video") {
+    normalized = normalizeMediaItem(item, kind, payload, options);
+  } else {
+    normalized = {
+      kind: "unknown",
+      rawType: item.type,
+      payloadKeys: Object.keys(item).filter((key) => key !== "type")
+    };
   }
 
-  if (kind === "image" || kind === "voice" || kind === "file" || kind === "video") {
-    return normalizeMediaItem(item, kind, payload, options);
-  }
-
-  return {
-    kind: "unknown",
-    rawType: item.type,
-    payloadKeys: Object.keys(item).filter((key) => key !== "type")
-  };
+  return quote ? { ...normalized, quote } : normalized;
 }
 
 export function normalizeRawMessage(raw = {}, options = {}) {
@@ -150,6 +179,8 @@ export function normalizeRawMessage(raw = {}, options = {}) {
     : itemKinds.length === 1
       ? itemKinds[0]
       : "mixed";
+  const quoteItem = items.find((item) => item.kind === "text" && item.quote)
+    ?? items.find((item) => item.quote);
 
   return compactObject({
     id,
@@ -160,6 +191,7 @@ export function normalizeRawMessage(raw = {}, options = {}) {
     type,
     text: text || undefined,
     items,
+    quote: quoteItem?.quote,
     messageType: raw.message_type ?? raw.messageType,
     messageState: raw.message_state ?? raw.messageState,
     rawType: raw.type,

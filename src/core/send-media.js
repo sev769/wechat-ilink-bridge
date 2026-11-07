@@ -5,12 +5,13 @@ import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
 import { WxbError } from "./errors.js";
-import { generateClientId, IlinkClient } from "./ilink-client.js";
+import { generateClientId, IlinkClient, pickServerMessageId } from "./ilink-client.js";
 import { outgoingItemTypes, protocolDefaults, uploadMediaTypes } from "./protocol-constants.js";
 import { resolveSendAccount, resolveTargetUserOrAlias } from "./send-text.js";
 import { sanitizeAttachmentFileName } from "./media-download.js";
 import { withOptionalTyping } from "./typing.js";
 import { recordTokenSend, resolveContextToken, resolveContextTokenSendQuota } from "../state/context-token-store.js";
+import { cacheQuoteSummaries, summarizeForQuoteCache } from "../state/quote-cache-store.js";
 import { appendMessageHistory } from "../state/message-history.js";
 import { withAccountLock } from "../state/lock.js";
 
@@ -485,8 +486,9 @@ export async function sendMedia(options = {}) {
         downloadParam
       });
 
+      let sendResponse;
       try {
-        await client.sendMediaMessage({
+        sendResponse = await client.sendMediaMessage({
           token: account.token,
           toUserId: targetUserId,
           item,
@@ -516,8 +518,24 @@ export async function sendMedia(options = {}) {
       const quotaUsed = await recordTokenSend(stateDir, account.accountId, activeContextToken, 1, { lock: false });
       const quotaLimit = resolveContextTokenSendQuota(config);
 
+      // Record the server-assigned message id (when the send response
+      // carries one) in the quote cache as a kind/fileName placeholder, so
+      // a later ref_msg pointing at this media message can be resolved.
+      const serverMessageId = pickServerMessageId(sendResponse, clientId);
+      if (serverMessageId) {
+        await cacheQuoteSummaries(stateDir, account.accountId, [summarizeForQuoteCache({
+          id: serverMessageId,
+          direction: "outgoing",
+          fromUserId: account.ownerUserId,
+          type: deliveryKind,
+          fileName: local.fileName,
+          timestamp: Math.floor(Date.now() / 1000)
+        }, "outgoing")], { lock: false });
+      }
+
       const historyEntry = {
         id: clientId,
+        ...(serverMessageId ? { serverMessageId } : {}),
         direction: "outgoing",
         fromUserId: account.ownerUserId,
         toUserId: targetUserId,
@@ -557,6 +575,7 @@ export async function sendMedia(options = {}) {
         requestedKind: kind,
         delivery: deliveryKind === "voice" ? "native-voice" : deliveryKind,
         clientId,
+        ...(serverMessageId ? { serverMessageId } : {}),
         fileName: local.fileName,
         mimeType: local.mimeType,
         bytes: local.rawSize,

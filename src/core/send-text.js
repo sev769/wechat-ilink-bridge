@@ -1,5 +1,5 @@
 import { WxbError } from "./errors.js";
-import { generateClientId, IlinkClient } from "./ilink-client.js";
+import { generateClientId, IlinkClient, pickServerMessageId } from "./ilink-client.js";
 import { chunkText } from "./chunk-text.js";
 import { listAccounts } from "../state/account-store.js";
 import { resolveAlias } from "../state/alias-store.js";
@@ -10,6 +10,7 @@ import {
   resolveContextTokenSendQuota
 } from "../state/context-token-store.js";
 import { appendMessageHistory } from "../state/message-history.js";
+import { cacheQuoteSummaries, summarizeForQuoteCache } from "../state/quote-cache-store.js";
 import { withAccountLock } from "../state/lock.js";
 import { queueTextDelivery } from "./delivery-queue.js";
 import { withOptionalTyping } from "./typing.js";
@@ -229,9 +230,10 @@ export async function sendText(options = {}) {
       for (let index = 0; index < sendChunks.length; index += 1) {
         const chunk = sendChunks[index];
         const clientId = generateClientId();
+        let sendResponse;
 
         try {
-          await client.sendTextMessage({
+          sendResponse = await client.sendTextMessage({
             token: account.token,
             toUserId: targetUserId,
             text: chunk,
@@ -281,8 +283,24 @@ export async function sendText(options = {}) {
         // count it even if the local history write below fails.
         quotaUsed = (await recordTokenSend(stateDir, account.accountId, activeContextToken, 1, { lock: false })) ?? (quotaUsed + 1);
 
+        // Record the server-assigned message id (when the send response
+        // carries one) in the quote cache so a later ref_msg pointing at
+        // this chunk can be resolved back to its text.
+        const serverMessageId = pickServerMessageId(sendResponse, clientId);
+        if (serverMessageId) {
+          await cacheQuoteSummaries(stateDir, account.accountId, [summarizeForQuoteCache({
+            id: serverMessageId,
+            direction: "outgoing",
+            fromUserId: account.ownerUserId,
+            type: "text",
+            text: chunk,
+            timestamp: startedAt
+          }, "outgoing")], { lock: false });
+        }
+
         const entry = {
           id: clientId,
+          ...(serverMessageId ? { serverMessageId } : {}),
           direction: "outgoing",
           fromUserId: account.ownerUserId,
           toUserId: targetUserId,
@@ -295,6 +313,7 @@ export async function sendText(options = {}) {
         };
         const sentItem = {
           clientId: entry.id,
+          ...(serverMessageId ? { serverMessageId } : {}),
           chunkIndex: entry.chunkIndex,
           chars: chunk.length
         };

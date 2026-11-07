@@ -10,6 +10,7 @@ import { listAccounts } from "../state/account-store.js";
 import { rememberContextToken } from "../state/context-token-store.js";
 import { appendMessageHistory } from "../state/message-history.js";
 import { readSeenIds, markSeenIds } from "../state/seen-store.js";
+import { cacheQuoteSummaries, getQuoteSummary, summarizeForQuoteCache } from "../state/quote-cache-store.js";
 import { readSyncBuffer, writeSyncBuffer } from "../state/sync-buffer-store.js";
 import { withAccountLock } from "../state/lock.js";
 
@@ -176,6 +177,26 @@ export async function fetchMessages(options = {}) {
       : unseenMessages.map(stripMessageMediaSecrets);
     const nextBuffer = normalized.getUpdatesBuf ?? previousBuffer;
     const newMessages = messages;
+
+    // Quote restore: cache every new message under its server id first (so
+    // a quote can even resolve within the same batch), then attach the
+    // cached original to any message carrying a ref_msg reference.
+    await cacheQuoteSummaries(
+      stateDir,
+      account.accountId,
+      newMessages.map((message) => summarizeForQuoteCache(message, "incoming")),
+      { lock: false }
+    );
+    for (const message of newMessages) {
+      const quotedId = message.quote?.messageId;
+      if (!quotedId) {
+        continue;
+      }
+      const quoted = await getQuoteSummary(stateDir, account.accountId, quotedId);
+      if (quoted) {
+        message.quotedMessage = quoted;
+      }
+    }
 
     for (const message of newMessages) {
       if (message.fromUserId && message.contextToken) {

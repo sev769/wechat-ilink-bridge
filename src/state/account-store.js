@@ -52,6 +52,7 @@ export async function listAccounts(stateDir, options = {}) {
   const accountFiles = names.filter((name) => name.endsWith(".json")
     && !name.includes(".context-tokens")
     && !name.includes(".context-token-usage")
+    && !name.includes(".quote-cache")
     && !name.includes(".sync-buffer")
     && !name.includes(".seen-msg-ids")
     && !name.includes(".delivery-queue"));

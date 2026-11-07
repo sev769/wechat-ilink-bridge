@@ -25,6 +25,38 @@ export function generateClientId(now = Date.now()) {
   return `wxb-${now}-${randomBytes(4).toString("hex")}`;
 }
 
+// The sendmessage response carries the server-assigned message id of the
+// delivered message (field name `message_id` per independent client
+// experiments; sibling shapes are tolerated). Returns undefined when the
+// response has no usable id, or when the only candidate is an echo of the
+// client_id we sent (which is not a server id).
+export function pickServerMessageId(response, clientId) {
+  const candidates = [
+    response?.message_id,
+    response?.msg_id,
+    response?.messageId,
+    response?.msgId,
+    response?.data?.message_id,
+    response?.data?.msg_id,
+    response?.data?.messageId,
+    response?.message?.message_id,
+    response?.message?.msg_id
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null || candidate === "") {
+      continue;
+    }
+    const value = String(candidate);
+    if (clientId && value === String(clientId)) {
+      continue;
+    }
+    return value;
+  }
+
+  return undefined;
+}
+
 export class IlinkClient {
   constructor(options = {}) {
     this.baseUrl = options.baseUrl ?? protocolDefaults.baseUrl;
