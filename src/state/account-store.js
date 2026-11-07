@@ -51,6 +51,7 @@ export async function listAccounts(stateDir, options = {}) {
   const names = await readdir(accountsDir(stateDir));
   const accountFiles = names.filter((name) => name.endsWith(".json")
     && !name.includes(".context-tokens")
+    && !name.includes(".context-token-usage")
     && !name.includes(".sync-buffer")
     && !name.includes(".seen-msg-ids")
     && !name.includes(".delivery-queue"));

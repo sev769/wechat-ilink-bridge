@@ -2,6 +2,7 @@ import { WxbError } from "./errors.js";
 import { chunkText } from "./chunk-text.js";
 import { generateClientId } from "./ilink-client.js";
 import { appendMessageHistory } from "../state/message-history.js";
+import { recordTokenSend } from "../state/context-token-store.js";
 import {
   enqueueDelivery,
   readDeliveryQueue,
@@ -129,6 +130,8 @@ export async function flushOneQueuedDeliveryForUser(options = {}) {
         clientId,
         timeoutMs
       });
+
+      await recordTokenSend(stateDir, account.accountId, contextToken, 1, { lock: false });
 
       await appendMessageHistory(stateDir, account.accountId, {
         id: clientId,

@@ -10,7 +10,7 @@ import { outgoingItemTypes, protocolDefaults, uploadMediaTypes } from "./protoco
 import { resolveSendAccount, resolveTargetUserOrAlias } from "./send-text.js";
 import { sanitizeAttachmentFileName } from "./media-download.js";
 import { withOptionalTyping } from "./typing.js";
-import { resolveContextToken } from "../state/context-token-store.js";
+import { recordTokenSend, resolveContextToken, resolveContextTokenSendQuota } from "../state/context-token-store.js";
 import { appendMessageHistory } from "../state/message-history.js";
 import { withAccountLock } from "../state/lock.js";
 
@@ -511,6 +511,11 @@ export async function sendMedia(options = {}) {
         });
       }
 
+      // The server accepted this media send against the active context
+      // token; count it toward the token's send quota.
+      const quotaUsed = await recordTokenSend(stateDir, account.accountId, activeContextToken, 1, { lock: false });
+      const quotaLimit = resolveContextTokenSendQuota(config);
+
       const historyEntry = {
         id: clientId,
         direction: "outgoing",
@@ -557,7 +562,12 @@ export async function sendMedia(options = {}) {
         bytes: local.rawSize,
         encryptedBytes: encryptedBytes.length,
         uploaded: true,
-        sent: true
+        sent: true,
+        quota: {
+          limit: quotaLimit,
+          used: quotaUsed ?? 0,
+          remaining: Math.max(0, quotaLimit - (quotaUsed ?? 0))
+        }
       };
     });
   });

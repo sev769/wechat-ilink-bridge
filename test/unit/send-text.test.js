@@ -7,7 +7,7 @@ import { WxbError } from "../../src/core/errors.js";
 import { sendText } from "../../src/core/send-text.js";
 import { saveAccount } from "../../src/state/account-store.js";
 import { setAlias } from "../../src/state/alias-store.js";
-import { rememberContextToken } from "../../src/state/context-token-store.js";
+import { getTokenSendCount, recordTokenSend, rememberContextToken } from "../../src/state/context-token-store.js";
 import { readDeliveryQueue } from "../../src/state/delivery-queue-store.js";
 import { messageHistoryFilePath, readMessageHistory } from "../../src/state/message-history.js";
 
@@ -391,5 +391,122 @@ test("sendText reports delivered chunk when outgoing history write fails", async
     );
 
     assert.equal(client.calls.length, 1);
+  });
+});
+
+test("sendText counts successful chunks against the token quota and reports remaining", async () => {
+  await withTempDir(async (stateDir) => {
+    await seedAccount(stateDir);
+    await rememberContextToken(stateDir, "bot_001", "user_001", "ctx_quota");
+    const client = fakeSendClient();
+
+    const first = await sendText({
+      stateDir,
+      userId: "user_001",
+      text: "one",
+      client,
+      config: {}
+    });
+    assert.deepEqual(first.quota, { limit: 10, used: 1, remaining: 9 });
+
+    const second = await sendText({
+      stateDir,
+      userId: "user_001",
+      text: "two",
+      client,
+      config: {}
+    });
+    assert.deepEqual(second.quota, { limit: 10, used: 2, remaining: 8 });
+    assert.equal(await getTokenSendCount(stateDir, "bot_001", "ctx_quota"), 2);
+  });
+});
+
+test("sendText queues instead of partially sending when the text cannot fit the remaining quota", async () => {
+  await withTempDir(async (stateDir) => {
+    await seedAccount(stateDir);
+    await rememberContextToken(stateDir, "bot_001", "user_001", "ctx_pack");
+    // Pre-consume 9 of 10 quota so only one send remains; the 53-char text
+    // can never fit into a single 16-char message.
+    await recordTokenSend(stateDir, "bot_001", "ctx_pack", 9);
+    const client = fakeSendClient();
+
+    const result = await sendText({
+      stateDir,
+      userId: "user_001",
+      text: "Alpha bravo. Charlie delta. Echo foxtrot. Golf hotel.",
+      client,
+      config: {
+        maxChunkChars: 16,
+        minChunkChars: 0,
+        maxDeliveryMessages: 10
+      }
+    });
+
+    assert.equal(result.delivered, false);
+    assert.equal(result.queued, true);
+    assert.equal(result.reason, "quota_exhausted");
+    assert.deepEqual(result.quota, { limit: 10, used: 9, remaining: 1 });
+    assert.equal(client.calls.length, 0);
+  });
+});
+
+test("sendText re-chunks to the minimum message count when quota is short but sufficient", async () => {
+  await withTempDir(async (stateDir) => {
+    await seedAccount(stateDir);
+    await rememberContextToken(stateDir, "bot_001", "user_001", "ctx_merge");
+    // Pre-consume 6 of 10 quota so exactly four sends remain.
+    await recordTokenSend(stateDir, "bot_001", "ctx_merge", 6);
+    const client = fakeSendClient();
+    const text = `Hi. ${"x".repeat(30)}`;
+
+    const result = await sendText({
+      stateDir,
+      userId: "user_001",
+      text,
+      client,
+      config: {
+        maxChunkChars: 10,
+        minChunkChars: 0,
+        maxDeliveryMessages: 10
+      }
+    });
+
+    // Boundary-aware chunking yields 5 chunks (an early "Hi." cut plus four
+    // 10/10/10/1 pieces); the quota-aware re-chunk fits the same text into
+    // the 4 remaining sends, each within the 10-char cap.
+    assert.equal(result.chunkCount, 4);
+    assert.equal(result.packedFromChunks, 5);
+    assert.equal(client.calls.length, 4);
+    assert.equal(client.calls.map((call) => call.text).join(""), text);
+    assert.ok(client.calls.every((call) => call.text.length <= 10));
+    assert.deepEqual(result.quota, { limit: 10, used: 10, remaining: 0 });
+  });
+});
+
+test("sendText queues with quota_exhausted when the token budget is fully used", async () => {
+  await withTempDir(async (stateDir) => {
+    await seedAccount(stateDir);
+    await rememberContextToken(stateDir, "bot_001", "user_001", "ctx_full");
+    await recordTokenSend(stateDir, "bot_001", "ctx_full", 10);
+    const client = fakeSendClient();
+
+    const result = await sendText({
+      stateDir,
+      userId: "user_001",
+      text: "should be queued",
+      client,
+      config: {}
+    });
+
+    assert.equal(result.delivered, false);
+    assert.equal(result.queued, true);
+    assert.equal(result.reason, "quota_exhausted");
+    assert.equal(result.queue.source, "quota_exhausted");
+    assert.equal(client.calls.length, 0);
+
+    const queue = await readDeliveryQueue(stateDir, "bot_001");
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].source, "quota_exhausted");
+    assert.equal(queue[0].text, "should be queued");
   });
 });

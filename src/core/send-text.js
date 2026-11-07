@@ -3,7 +3,12 @@ import { generateClientId, IlinkClient } from "./ilink-client.js";
 import { chunkText } from "./chunk-text.js";
 import { listAccounts } from "../state/account-store.js";
 import { resolveAlias } from "../state/alias-store.js";
-import { resolveContextToken } from "../state/context-token-store.js";
+import {
+  getTokenSendCount,
+  recordTokenSend,
+  resolveContextToken,
+  resolveContextTokenSendQuota
+} from "../state/context-token-store.js";
 import { appendMessageHistory } from "../state/message-history.js";
 import { withAccountLock } from "../state/lock.js";
 import { queueTextDelivery } from "./delivery-queue.js";
@@ -150,11 +155,79 @@ export async function sendText(options = {}) {
       contextToken,
       timeoutMs
     }, async (activeContextToken) => {
+      const quotaLimit = resolveContextTokenSendQuota(config);
+      let quotaUsed = await getTokenSendCount(stateDir, account.accountId, activeContextToken);
+      const remainingBefore = Math.max(0, quotaLimit - quotaUsed);
+      let sendChunks = chunks;
+
+      if (chunks.length > remainingBefore) {
+        // Re-chunk the full text with boundary cuts effectively disabled
+        // (minChunkChars == the per-message cap), which yields the minimum
+        // possible message count under the cap. If even that does not fit
+        // the remaining quota, the whole delivery is queued instead of
+        // being sent halfway into the server-side quota wall.
+        const maxChunkChars = chunkOptions.maxChunkChars ?? config.maxChunkChars ?? 3800;
+        let packed = null;
+        if (remainingBefore > 0) {
+          try {
+            const repacked = chunkText(text, {
+              maxChunkChars,
+              minChunkChars: maxChunkChars,
+              maxMessages: remainingBefore
+            });
+            if (repacked.length <= remainingBefore) {
+              packed = repacked;
+            }
+          } catch {
+            packed = null;
+          }
+        }
+
+        if (packed) {
+          sendChunks = packed;
+        } else if (queueOnInvalidContext) {
+          const queued = await queueTextDelivery({
+            stateDir,
+            accountId: account.accountId,
+            userId: targetUserId,
+            text,
+            source: "quota_exhausted",
+            maxItems: config.delayedQueueMaxItems,
+            lock: false
+          });
+
+          return {
+            accountId: account.accountId,
+            toUserId: targetUserId,
+            delivered: false,
+            queued: true,
+            reason: "quota_exhausted",
+            quota: {
+              limit: quotaLimit,
+              used: quotaUsed,
+              remaining: remainingBefore
+            },
+            queue: queued
+          };
+        } else {
+          throw new WxbError("CONTEXT_TOKEN_QUOTA_EXHAUSTED", "The cached context token has no send quota left for this delivery; ask the user to send a new message to refresh it.", {
+            retryable: false,
+            details: {
+              accountId: account.accountId,
+              userId: targetUserId,
+              quotaLimit,
+              quotaUsed,
+              chunks: chunks.length
+            }
+          });
+        }
+      }
+
       const sent = [];
       const startedAt = Math.floor(Date.now() / 1000);
 
-      for (let index = 0; index < chunks.length; index += 1) {
-        const chunk = chunks[index];
+      for (let index = 0; index < sendChunks.length; index += 1) {
+        const chunk = sendChunks[index];
         const clientId = generateClientId();
 
         try {
@@ -199,10 +272,14 @@ export async function sendText(options = {}) {
               ...(error.details ?? {}),
               sentCount: sent.length,
               failedChunkIndex: sent.length + 1,
-              totalChunks: chunks.length
+              totalChunks: sendChunks.length
             }
           });
         }
+
+        // The server accepted this chunk against the active context token;
+        // count it even if the local history write below fails.
+        quotaUsed = (await recordTokenSend(stateDir, account.accountId, activeContextToken, 1, { lock: false })) ?? (quotaUsed + 1);
 
         const entry = {
           id: clientId,
@@ -214,7 +291,7 @@ export async function sendText(options = {}) {
           text: chunk,
           contextToken: activeContextToken,
           chunkIndex: index + 1,
-          chunkCount: chunks.length
+          chunkCount: sendChunks.length
         };
         const sentItem = {
           clientId: entry.id,
@@ -231,7 +308,7 @@ export async function sendText(options = {}) {
               delivered: true,
               sentCount: sent.length + 1,
               failedChunkIndex: entry.chunkIndex,
-              totalChunks: chunks.length,
+              totalChunks: sendChunks.length,
               clientId: entry.id,
               deliveredClientIds: [...sent.map((item) => item.clientId), entry.id],
               cause: error?.message ?? String(error)
@@ -245,7 +322,13 @@ export async function sendText(options = {}) {
       return {
         accountId: account.accountId,
         toUserId: targetUserId,
-        chunkCount: chunks.length,
+        chunkCount: sendChunks.length,
+        ...(sendChunks !== chunks ? { packedFromChunks: chunks.length } : {}),
+        quota: {
+          limit: quotaLimit,
+          used: quotaUsed,
+          remaining: Math.max(0, quotaLimit - quotaUsed)
+        },
         sent
       };
     });
