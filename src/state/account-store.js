@@ -55,6 +55,7 @@ export async function listAccounts(stateDir, options = {}) {
     && !name.includes(".quote-cache")
     && !name.includes(".sync-buffer")
     && !name.includes(".seen-msg-ids")
+    && !name.includes(".poller-lease")
     && !name.includes(".delivery-queue"));
   const accounts = [];
 

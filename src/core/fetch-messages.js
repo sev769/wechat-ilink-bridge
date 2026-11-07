@@ -9,6 +9,7 @@ import { downloadMessagesMedia, stripMessageMediaSecrets } from "./media-downloa
 import { listAccounts } from "../state/account-store.js";
 import { rememberContextToken } from "../state/context-token-store.js";
 import { appendMessageHistory } from "../state/message-history.js";
+import { acquirePollerLease } from "../state/poller-lease.js";
 import { readSeenIds, markSeenIds } from "../state/seen-store.js";
 import { clearQueuedDeliveryBlock } from "../state/delivery-queue-store.js";
 import { cacheQuoteSummaries, getQuoteSummary, summarizeForQuoteCache } from "../state/quote-cache-store.js";
@@ -201,6 +202,13 @@ export async function fetchMessages(options = {}) {
     channelVersion: config.channelVersion
   });
 
+  // Single-poller lease: a second live fetch for this account fails fast
+  // with POLLER_ALREADY_RUNNING instead of racing this poll's cursor. The
+  // lease is released when this fetch finishes, so normal serial polling
+  // (the next poll starts only after this one ends) is never blocked.
+  const lease = await acquirePollerLease(stateDir, account.accountId);
+
+  try {
   // 2026-10-23: 锁只保护短暂的状态读写，长轮询（20s 网络等待）不再持锁。
   // 之前整段持锁，轮询期间并发的 send 会报 STATE_LOCK_TIMEOUT 被迫重试。
   // 单轮询器部署下不会有两个 fetch 并发，游标不会错乱。
@@ -216,7 +224,7 @@ export async function fetchMessages(options = {}) {
 
   await maybeCaptureRawResponse(stateDir, account.accountId, response);
 
-  return withAccountLock(stateDir, account.accountId, async () => {
+  return await withAccountLock(stateDir, account.accountId, async () => {
     const normalized = normalizeUpdateResponse(response, {
       includeContextToken: true,
       includeMediaSecrets: downloadMedia
@@ -320,4 +328,7 @@ export async function fetchMessages(options = {}) {
       newMessageCount: newMessages.length
     };
   });
+  } finally {
+    await lease.release();
+  }
 }
