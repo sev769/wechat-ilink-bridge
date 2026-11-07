@@ -68,6 +68,7 @@ WeChat-iLink Bridge（`wxb`）是一个面向 AI Agent 的微信 iLink 本地桥
   2. PATH 中的 `silk-encoder`（或 `silk_encoder`）
   找不到时返回结构化错误 `SILK_ENCODER_NOT_FOUND` 并说明配置方法；已是 `.silk` 的文件不转码、不需要上述工具。
 - `fetch` 长轮询不再全程持有账号锁：轮询期间并发 `send` 不再报 `STATE_LOCK_TIMEOUT`（前提：单轮询器部署，不要多进程同时 fetch 同一账号）。
+- 自动回复 worker 采用「发送前复查合并」模式：回复前沿正常 fetch 路径再查一次新消息，把用户连发的补充消息合并成一轮只回一条；设计取舍（为何不在桥内做只读 peek）见 `docs/auto-reply-worker.md`。
 - 账号锁可回收残留死锁：进程被杀死后留下的 `.lock` 文件会按 PID 存活状态自动回收，不再永久超时。
 
 ## 从源码安装
