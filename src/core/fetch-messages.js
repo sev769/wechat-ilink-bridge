@@ -12,7 +12,7 @@ import { appendMessageHistory } from "../state/message-history.js";
 import { acquirePollerLease } from "../state/poller-lease.js";
 import { readSeenIds, markSeenIds } from "../state/seen-store.js";
 import { clearQueuedDeliveryBlock } from "../state/delivery-queue-store.js";
-import { cacheQuoteSummaries, getQuoteSummary, summarizeForQuoteCache } from "../state/quote-cache-store.js";
+import { cacheQuoteSummaries, resolveQuoteSummary, summarizeForQuoteCache } from "../state/quote-cache-store.js";
 import { readSyncBuffer, writeSyncBuffer } from "../state/sync-buffer-store.js";
 import { withAccountLock } from "../state/lock.js";
 
@@ -254,11 +254,10 @@ export async function fetchMessages(options = {}) {
       { lock: false }
     );
     for (const message of newMessages) {
-      const quotedId = message.quote?.messageId;
-      if (!quotedId) {
+      if (!message.quote?.messageId) {
         continue;
       }
-      const quoted = await getQuoteSummary(stateDir, account.accountId, quotedId);
+      const quoted = await resolveQuoteSummary(stateDir, account.accountId, message.quote);
       if (quoted) {
         message.quotedMessage = quoted;
       }

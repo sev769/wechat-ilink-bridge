@@ -127,3 +127,89 @@ export async function getQuoteSummary(stateDir, accountId, serverMessageId) {
     timestamp: summary.timestamp
   };
 }
+
+// The server msg_id handed back in a sendmessage response is NOT the id a
+// later ref_msg points at: measured pairs (response id -> ref id) differ by
+// a few hundred while sharing the same high bits (a >> 10 keeps them in the
+// same block), and the canonical ref id never appears anywhere else. So an
+// exact-key lookup misses outgoing messages even though they were cached.
+// Fallback: claim the cache entry in the same id block whose message
+// timestamp (seconds) is closest to the ref's server create_time_ms, when
+// within tolerance. Ids are 19-digit strings beyond Number.MAX_SAFE_INTEGER,
+// so block comparison must use BigInt, never number arithmetic.
+export const QUOTE_BLOCK_TIME_TOLERANCE_MS = 15000;
+
+function summaryExpired(summary, now) {
+  const cachedAt = Number(summary?.cachedAt ?? 0);
+  return Number.isFinite(cachedAt) && cachedAt > 0 && now - cachedAt > QUOTE_CACHE_RETENTION_MS;
+}
+
+function toQuoteResult(messageId, summary, matchType) {
+  return {
+    messageId,
+    direction: summary.direction,
+    fromUserId: summary.fromUserId,
+    kind: summary.kind,
+    ...(summary.text ? { text: summary.text } : {}),
+    ...(summary.fileName ? { fileName: summary.fileName } : {}),
+    timestamp: summary.timestamp,
+    matchType
+  };
+}
+
+function idBlock(idString) {
+  try {
+    return BigInt(idString) >> 10n;
+  } catch {
+    return undefined;
+  }
+}
+
+// Resolve a quote reference ({ messageId, createTimeMs }) to a cached
+// summary. Exact key hit wins; otherwise fall back to same-block + nearest
+// timestamp matching as described above. Returns undefined when nothing
+// qualifies — the caller then leaves the message without a quotedMessage.
+export async function resolveQuoteSummary(stateDir, accountId, quote) {
+  const targetId = quote?.messageId;
+  if (!targetId) {
+    return undefined;
+  }
+
+  const cache = await readQuoteCache(stateDir, accountId);
+  const now = Date.now();
+
+  const exact = cache[String(targetId)];
+  if (exact && !summaryExpired(exact, now)) {
+    return toQuoteResult(String(targetId), exact, "exact");
+  }
+
+  const createTimeMs = Number(quote?.createTimeMs);
+  const targetBlock = idBlock(String(targetId));
+  if (!Number.isFinite(createTimeMs) || targetBlock === undefined) {
+    return undefined;
+  }
+
+  let best;
+  for (const [id, summary] of Object.entries(cache)) {
+    if (!summary || typeof summary !== "object" || summaryExpired(summary, now)) {
+      continue;
+    }
+    const block = idBlock(id);
+    if (block === undefined || block !== targetBlock) {
+      continue;
+    }
+    const timestampSec = Number(summary.timestamp);
+    if (!Number.isFinite(timestampSec)) {
+      continue;
+    }
+    const diffMs = Math.abs(timestampSec * 1000 - createTimeMs);
+    if (diffMs > QUOTE_BLOCK_TIME_TOLERANCE_MS) {
+      continue;
+    }
+    if (!best || diffMs < best.diffMs) {
+      best = { id, summary, diffMs };
+    }
+  }
+
+  return best ? toQuoteResult(best.id, best.summary, "block-time") : undefined;
+}
