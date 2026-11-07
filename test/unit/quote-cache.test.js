@@ -364,6 +364,67 @@ test("resolveQuoteSummary misses when the same-block candidate is too far in tim
   });
 });
 
+test("resolveQuoteSummary falls back to proximity + time across a block boundary (measured pair 3)", async () => {
+  await withTempDir(async (stateDir) => {
+    await saveAccount(stateDir, {
+      accountId: "bot_q12",
+      token: "bot_secret_q12",
+      baseUrl: "https://mock.example",
+      ownerUserId: "owner_q12"
+    });
+    await cacheQuoteSummaries(stateDir, "bot_q12", [
+      summarizeForQuoteCache({ id: "7524961003499663000", direction: "outgoing", fromUserId: "owner_q12", type: "text", text: "引用复验", timestamp: 1794090508 }, "outgoing")
+    ]);
+
+    // Measured live 2026-11-08: this pair straddles the >>10 block boundary
+    // (delta +752), so the block fallback misses and the proximity tier
+    // must claim it.
+    const hit = await resolveQuoteSummary(stateDir, "bot_q12", { messageId: "7524961003499663752", createTimeMs: 1794090510000 });
+    assert.equal(hit.text, "引用复验");
+    assert.equal(hit.matchType, "time");
+    assert.equal(hit.messageId, "7524961003499663000");
+  });
+});
+
+test("resolveQuoteSummary proximity tier refuses ambiguous candidates", async () => {
+  await withTempDir(async (stateDir) => {
+    await saveAccount(stateDir, {
+      accountId: "bot_q13",
+      token: "bot_secret_q13",
+      baseUrl: "https://mock.example",
+      ownerUserId: "owner_q13"
+    });
+    await cacheQuoteSummaries(stateDir, "bot_q13", [
+      summarizeForQuoteCache({ id: "7524961003499663000", direction: "outgoing", fromUserId: "owner_q13", type: "text", text: "甲", timestamp: 1794090508 }, "outgoing"),
+      summarizeForQuoteCache({ id: "7524961003499662000", direction: "outgoing", fromUserId: "owner_q13", type: "text", text: "乙", timestamp: 1794090509 }, "outgoing")
+    ]);
+
+    // Both entries are numerically near the ref id and their time diffs
+    // (2000ms vs 1000ms) are within the ambiguity window: refuse to guess.
+    const hit = await resolveQuoteSummary(stateDir, "bot_q13", { messageId: "7524961003499663752", createTimeMs: 1794090510000 });
+    assert.equal(hit, undefined);
+  });
+});
+
+test("resolveQuoteSummary proximity tier misses when the id is too far away", async () => {
+  await withTempDir(async (stateDir) => {
+    await saveAccount(stateDir, {
+      accountId: "bot_q14",
+      token: "bot_secret_q14",
+      baseUrl: "https://mock.example",
+      ownerUserId: "owner_q14"
+    });
+    await cacheQuoteSummaries(stateDir, "bot_q14", [
+      summarizeForQuoteCache({ id: "7524961003499763000", direction: "outgoing", fromUserId: "owner_q14", type: "text", text: "太远", timestamp: 1794090508 }, "outgoing")
+    ]);
+
+    // Same moment, but the cached id is ~100k away from the ref id: not a
+    // sibling id, so the proximity tier must not claim it.
+    const hit = await resolveQuoteSummary(stateDir, "bot_q14", { messageId: "7524961003499663752", createTimeMs: 1794090510000 });
+    assert.equal(hit, undefined);
+  });
+});
+
 test("fetchMessages restores a quote whose ref id differs from the send-response cache key", async () => {
   await withTempDir(async (stateDir) => {
     await saveAccount(stateDir, {

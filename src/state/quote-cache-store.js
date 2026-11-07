@@ -129,15 +129,22 @@ export async function getQuoteSummary(stateDir, accountId, serverMessageId) {
 }
 
 // The server msg_id handed back in a sendmessage response is NOT the id a
-// later ref_msg points at: measured pairs (response id -> ref id) differ by
-// a few hundred while sharing the same high bits (a >> 10 keeps them in the
-// same block), and the canonical ref id never appears anywhere else. So an
-// exact-key lookup misses outgoing messages even though they were cached.
-// Fallback: claim the cache entry in the same id block whose message
-// timestamp (seconds) is closest to the ref's server create_time_ms, when
-// within tolerance. Ids are 19-digit strings beyond Number.MAX_SAFE_INTEGER,
-// so block comparison must use BigInt, never number arithmetic.
+// later ref_msg points at: measured pairs (response id -> ref id) are
+// 7524957599004039000 -> 7524957599004038792, 7524958399143069000 ->
+// 7524958399143068936, and 7524961003499663000 -> 7524961003499663752. The
+// two ids are always numerically close (delta <= ~1000) and the quoted
+// message's server create_time_ms is within ~3s of the locally recorded
+// timestamp, but the delta's sign and size vary and a pair can straddle any
+// fixed block boundary, so no single exact or block rule suffices. The
+// canonical ref id never appears anywhere else. Resolution is therefore
+// tiered: exact key, then same id block (>> 10) + nearest time, then
+// numeric proximity + nearest time with an ambiguity guard. Ids are
+// 19-digit strings beyond Number.MAX_SAFE_INTEGER, so all id arithmetic
+// must use BigInt, never number arithmetic.
 export const QUOTE_BLOCK_TIME_TOLERANCE_MS = 15000;
+export const QUOTE_TIME_TOLERANCE_MS = 10000;
+export const QUOTE_TIME_MAX_ID_DELTA = 4096n;
+export const QUOTE_TIME_AMBIGUITY_MS = 1000;
 
 function summaryExpired(summary, now) {
   const cachedAt = Number(summary?.cachedAt ?? 0);
@@ -167,8 +174,9 @@ function idBlock(idString) {
 
 // Resolve a quote reference ({ messageId, createTimeMs }) to a cached
 // summary. Exact key hit wins; otherwise fall back to same-block + nearest
-// timestamp matching as described above. Returns undefined when nothing
-// qualifies — the caller then leaves the message without a quotedMessage.
+// timestamp, then to numeric-proximity + nearest timestamp (guarded
+// against ambiguity). Returns undefined when nothing qualifies — the
+// caller then leaves the message without a quotedMessage.
 export async function resolveQuoteSummary(stateDir, accountId, quote) {
   const targetId = quote?.messageId;
   if (!targetId) {
@@ -184,32 +192,68 @@ export async function resolveQuoteSummary(stateDir, accountId, quote) {
   }
 
   const createTimeMs = Number(quote?.createTimeMs);
-  const targetBlock = idBlock(String(targetId));
-  if (!Number.isFinite(createTimeMs) || targetBlock === undefined) {
+  if (!Number.isFinite(createTimeMs)) {
     return undefined;
   }
 
-  let best;
+  const candidates = [];
   for (const [id, summary] of Object.entries(cache)) {
     if (!summary || typeof summary !== "object" || summaryExpired(summary, now)) {
-      continue;
-    }
-    const block = idBlock(id);
-    if (block === undefined || block !== targetBlock) {
       continue;
     }
     const timestampSec = Number(summary.timestamp);
     if (!Number.isFinite(timestampSec)) {
       continue;
     }
-    const diffMs = Math.abs(timestampSec * 1000 - createTimeMs);
-    if (diffMs > QUOTE_BLOCK_TIME_TOLERANCE_MS) {
-      continue;
+    candidates.push({ id, summary, diffMs: Math.abs(timestampSec * 1000 - createTimeMs) });
+  }
+
+  // Tier 2: same id block, nearest timestamp within the block tolerance.
+  const targetBlock = idBlock(String(targetId));
+  if (targetBlock !== undefined) {
+    let best;
+    for (const candidate of candidates) {
+      if (candidate.diffMs > QUOTE_BLOCK_TIME_TOLERANCE_MS) {
+        continue;
+      }
+      const block = idBlock(candidate.id);
+      if (block === undefined || block !== targetBlock) {
+        continue;
+      }
+      if (!best || candidate.diffMs < best.diffMs) {
+        best = candidate;
+      }
     }
-    if (!best || diffMs < best.diffMs) {
-      best = { id, summary, diffMs };
+    if (best) {
+      return toQuoteResult(best.id, best.summary, "block-time");
     }
   }
 
-  return best ? toQuoteResult(best.id, best.summary, "block-time") : undefined;
+  // Tier 3: numeric proximity + nearest timestamp. Covers pairs that
+  // straddle a block boundary. Refuse to guess when two candidates are
+  // nearly equidistant in time.
+  let targetValue;
+  try {
+    targetValue = BigInt(String(targetId));
+  } catch {
+    return undefined;
+  }
+  const near = candidates
+    .filter((candidate) => candidate.diffMs <= QUOTE_TIME_TOLERANCE_MS)
+    .filter((candidate) => {
+      try {
+        const delta = BigInt(candidate.id) - targetValue;
+        return delta <= QUOTE_TIME_MAX_ID_DELTA && delta >= -QUOTE_TIME_MAX_ID_DELTA;
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => a.diffMs - b.diffMs);
+  if (near.length === 0) {
+    return undefined;
+  }
+  if (near.length > 1 && near[1].diffMs - near[0].diffMs <= QUOTE_TIME_AMBIGUITY_MS) {
+    return undefined;
+  }
+  return toQuoteResult(near[0].id, near[0].summary, "time");
 }
