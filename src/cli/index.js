@@ -4,6 +4,7 @@ import { loadConfig } from "../config/load-config.js";
 import { runAliasCommand } from "./commands/alias.js";
 import { runAccountsCommand } from "./commands/accounts.js";
 import { runCleanupCommand } from "./commands/cleanup.js";
+import { runDoctorCommand } from "./commands/doctor.js";
 import { runFetchCommand } from "./commands/fetch.js";
 import { runHeartbeatCommand } from "./commands/heartbeat.js";
 import { runLoginCommand } from "./commands/login.js";
@@ -12,7 +13,7 @@ import { runQueueCommand } from "./commands/queue.js";
 import { runSendCommand } from "./commands/send.js";
 import { runStatusCommand } from "./commands/status.js";
 
-const knownCommands = new Set(["login", "accounts", "status", "fetch", "send", "poll", "heartbeat", "alias", "queue", "cleanup"]);
+const knownCommands = new Set(["login", "accounts", "status", "fetch", "send", "poll", "heartbeat", "alias", "queue", "cleanup", "doctor"]);
 
 function printJson(payload) {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -32,7 +33,8 @@ function help() {
       heartbeat: "Run one scheduled keepalive fetch without a daemon",
       alias: "Manage readable aliases for opaque user IDs",
       queue: "Inspect, retry, discard, or clear delayed delivery queue items",
-      cleanup: "Prune local message history and inbox attachments"
+      cleanup: "Prune local message history and inbox attachments",
+      doctor: "Run local health checks (toolchain, account, tokens, queue, state files, last fetch); exit 0 healthy / 1 degraded / 2 faulty"
     }
   });
 }
@@ -143,6 +145,11 @@ async function main(argv = process.argv.slice(2)) {
 
   if (command === "cleanup") {
     maybePrintJson(await runCleanupCommand(commandArgs, context));
+    return;
+  }
+
+  if (command === "doctor") {
+    maybePrintJson(await runDoctorCommand(commandArgs, context));
     return;
   }
 
