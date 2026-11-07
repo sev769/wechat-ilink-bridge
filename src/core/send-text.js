@@ -1,5 +1,5 @@
 import { WxbError } from "./errors.js";
-import { generateClientId, IlinkClient, pickServerMessageId } from "./ilink-client.js";
+import { generateClientId, IlinkClient, maybeCaptureRawSendResponse, pickServerMessageId } from "./ilink-client.js";
 import { chunkText } from "./chunk-text.js";
 import { listAccounts } from "../state/account-store.js";
 import { resolveAlias } from "../state/alias-store.js";
@@ -318,6 +318,7 @@ export async function sendText(options = {}) {
         // Record the server-assigned message id (when the send response
         // carries one) in the quote cache so a later ref_msg pointing at
         // this chunk can be resolved back to its text.
+        await maybeCaptureRawSendResponse(stateDir, { kind: "sendText", clientId, response: sendResponse });
         const serverMessageId = pickServerMessageId(sendResponse, clientId);
         if (serverMessageId) {
           await cacheQuoteSummaries(stateDir, account.accountId, [summarizeForQuoteCache({
