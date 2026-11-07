@@ -26,16 +26,24 @@ export async function pollMessages(options = {}) {
     stoppedBy: "limit"
   };
 
+  // If the server advertises a longpolling timeout, adopt it for the
+  // remaining iterations of this poll run.
+  let activeTimeoutMs = timeoutMs;
+
   for (let index = 0; index < maxIterations; index += 1) {
     try {
       const result = await fetchMessages({
         stateDir,
         accountId,
         config,
-        timeoutMs,
+        timeoutMs: activeTimeoutMs,
         retry,
         client
       });
+
+      if (Number.isInteger(result.longpollingTimeoutMs)) {
+        activeTimeoutMs = result.longpollingTimeoutMs;
+      }
 
       summary.iterations += 1;
       summary.messageCount += result.newMessageCount;

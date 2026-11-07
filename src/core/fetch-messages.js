@@ -89,10 +89,55 @@ export async function resolveFetchAccount(stateDir, accountId) {
   return accounts[0];
 }
 
-async function getUpdatesWithRetry(client, request, options = {}) {
+// Long-poll retry policy (the ecosystem-converged table):
+// - a client-side request timeout is the normal end of a long poll, not a
+//   failure: re-poll immediately, never escalate;
+// - a general retryable failure backs off 2s;
+// - from the 3rd consecutive failure the backoff grows to 30s;
+// - SESSION_EXPIRED (and any non-retryable error) is thrown immediately —
+//   retrying cannot help, re-login is required.
+// An explicit retryDelaysMs schedule, when provided, still wins for
+// backwards compatibility.
+export const LONG_POLL_FAILURE_DELAY_MS = 2000;
+export const LONG_POLL_ESCALATED_DELAY_MS = 30000;
+export const LONG_POLL_ESCALATION_THRESHOLD = 3;
+
+export function isLongPollTimeoutError(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.name === "AbortError") {
+    return true;
+  }
+  if (error.code !== "NETWORK_ERROR") {
+    return false;
+  }
+  const cause = error.details?.cause ?? error.message ?? "";
+  return /timeout/i.test(String(cause));
+}
+
+export function pickLongpollingTimeoutMs(response) {
+  const candidates = [
+    response?.longpolling_timeout_ms,
+    response?.longPollingTimeoutMs,
+    response?.data?.longpolling_timeout_ms,
+    response?.data?.longPollingTimeoutMs
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isInteger(value) && value >= 1000 && value <= 600000) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+export async function getUpdatesWithRetry(client, request, options = {}) {
   const maxAttempts = options.maxAttempts ?? 3;
-  const retryDelaysMs = options.retryDelaysMs ?? [1000, 2000, 4000];
+  const legacyDelays = options.retryDelaysMs;
+  const sleepImpl = options.sleep ?? sleep;
   let lastError;
+  let consecutiveFailures = 0;
 
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
     throw new WxbError("CONFIG_VALUE_INVALID", "maxAttempts must be an integer greater than or equal to 1.", {
@@ -109,12 +154,24 @@ async function getUpdatesWithRetry(client, request, options = {}) {
       };
     } catch (error) {
       lastError = error;
-      if (!error.retryable || attempt >= maxAttempts) {
+      if (error?.code === "SESSION_EXPIRED" || !error?.retryable || attempt >= maxAttempts) {
         throw error;
       }
-      const delay = retryDelaysMs[Math.min(attempt - 1, retryDelaysMs.length - 1)] ?? 0;
+
+      let delay;
+      if (legacyDelays) {
+        delay = legacyDelays[Math.min(attempt - 1, legacyDelays.length - 1)] ?? 0;
+      } else if (isLongPollTimeoutError(error)) {
+        delay = 0;
+      } else {
+        consecutiveFailures += 1;
+        delay = consecutiveFailures >= LONG_POLL_ESCALATION_THRESHOLD
+          ? LONG_POLL_ESCALATED_DELAY_MS
+          : LONG_POLL_FAILURE_DELAY_MS;
+      }
+
       if (delay > 0) {
-        await sleep(delay);
+        await sleepImpl(delay);
       }
     }
   }
@@ -127,7 +184,7 @@ export async function fetchMessages(options = {}) {
     stateDir,
     accountId,
     config = {},
-    timeoutMs = config.fetchTimeoutMs,
+    timeoutMs = config.longpollingTimeoutMs ?? config.fetchTimeoutMs,
     client: providedClient,
     retry = {},
     downloadMedia = false,
@@ -246,6 +303,8 @@ export async function fetchMessages(options = {}) {
 
     await writeSyncBuffer(stateDir, account.accountId, nextBuffer);
 
+    const longpollingTimeoutMs = pickLongpollingTimeoutMs(response);
+
     return {
       accountId: account.accountId,
       cursor: {
@@ -254,6 +313,7 @@ export async function fetchMessages(options = {}) {
         advanced: nextBuffer !== previousBuffer
       },
       attempts,
+      ...(longpollingTimeoutMs ? { longpollingTimeoutMs } : {}),
       messages: newMessages.map(stripInternalMessageFields),
       delayedDeliveries,
       rawMessageCount: normalized.messages.length,
