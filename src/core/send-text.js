@@ -4,6 +4,7 @@ import { chunkText } from "./chunk-text.js";
 import { listAccounts } from "../state/account-store.js";
 import { resolveAlias } from "../state/alias-store.js";
 import {
+  describeContextToken,
   getTokenSendCount,
   recordTokenSend,
   resolveContextToken,
@@ -79,6 +80,29 @@ export async function resolveTargetUserOrAlias(stateDir, options = {}) {
   return resolveTargetUser(options.userId);
 }
 
+// Attach token provenance (source + age in seconds, when the bridge has a
+// record of the token) to context-token errors so the operator can tell at
+// a glance whether to wait for a fresh inbound message or re-login.
+export async function annotateContextTokenError(error, { stateDir, accountId, userId, tokenValue }) {
+  if (!(error instanceof WxbError)) {
+    return error;
+  }
+  if (error.code !== "INVALID_CONTEXT_TOKEN" && error.code !== "NO_CONTEXT_TOKEN") {
+    return error;
+  }
+
+  const info = await describeContextToken(stateDir, accountId, userId, tokenValue).catch(() => undefined);
+  return new WxbError(error.code, error.message, {
+    retryable: error.retryable,
+    status: error.status,
+    details: {
+      ...(error.details ?? {}),
+      tokenSource: info?.source ?? (tokenValue ? "explicit" : "none"),
+      ...(info?.ageSeconds !== undefined ? { tokenAgeSeconds: info.ageSeconds } : {})
+    }
+  });
+}
+
 export async function sendText(options = {}) {
   const {
     stateDir,
@@ -141,7 +165,8 @@ export async function sendText(options = {}) {
         retryable: false,
         details: {
           accountId: account.accountId,
-          userId: targetUserId
+          userId: targetUserId,
+          tokenSource: "none"
         }
       });
     }
@@ -246,14 +271,21 @@ export async function sendText(options = {}) {
             throw error;
           }
 
-          if (queueOnInvalidContext && error.code === "INVALID_CONTEXT_TOKEN" && sent.length === 0) {
+          const annotatedError = await annotateContextTokenError(error, {
+            stateDir,
+            accountId: account.accountId,
+            userId: targetUserId,
+            tokenValue: activeContextToken
+          });
+
+          if (queueOnInvalidContext && annotatedError.code === "INVALID_CONTEXT_TOKEN" && sent.length === 0) {
             const queued = await queueTextDelivery({
               stateDir,
               accountId: account.accountId,
               userId: targetUserId,
               text,
               source: "invalid_context",
-              error,
+              error: annotatedError,
               maxItems: config.delayedQueueMaxItems,
               lock: false
             });
@@ -267,11 +299,11 @@ export async function sendText(options = {}) {
             };
           }
 
-          throw new WxbError(error.code, error.message, {
-            retryable: error.retryable,
-            status: error.status,
+          throw new WxbError(annotatedError.code, annotatedError.message, {
+            retryable: annotatedError.retryable,
+            status: annotatedError.status,
             details: {
-              ...(error.details ?? {}),
+              ...(annotatedError.details ?? {}),
               sentCount: sent.length,
               failedChunkIndex: sent.length + 1,
               totalChunks: sendChunks.length

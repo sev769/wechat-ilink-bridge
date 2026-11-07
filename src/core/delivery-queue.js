@@ -62,7 +62,8 @@ export async function queueTextDelivery(options = {}) {
     lastError: error
       ? {
         code: error.code ?? "UNKNOWN_ERROR",
-        message: error.message ?? String(error)
+        message: error.message ?? String(error),
+        ...(error.details ? { details: error.details } : {})
       }
       : undefined
   }, {

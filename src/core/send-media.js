@@ -407,7 +407,8 @@ export async function sendMedia(options = {}) {
         retryable: false,
         details: {
           accountId: account.accountId,
-          userId: targetUserId
+          userId: targetUserId,
+          tokenSource: "none"
         }
       });
     }

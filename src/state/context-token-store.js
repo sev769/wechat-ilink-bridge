@@ -6,8 +6,45 @@ export function contextTokenFilePath(stateDir, accountId) {
   return accountStatePath(stateDir, accountId, ".context-tokens.json");
 }
 
-export async function readContextTokens(stateDir, accountId) {
+async function readContextTokensRaw(stateDir, accountId) {
   return readJsonFile(contextTokenFilePath(stateDir, accountId), {});
+}
+
+// Public contract: the plain { userId: tokenString } map. Entries stored
+// in the timestamped object form are unwrapped to their token string.
+export async function readContextTokens(stateDir, accountId) {
+  const entries = await readContextTokenEntries(stateDir, accountId);
+  return Object.fromEntries(Object.entries(entries).map(([userId, entry]) => [userId, entry.token]));
+}
+
+// Stored values are either a legacy plain token string or an object
+// { token, updatedAt } recording when the token was learned. Both forms
+// are read everywhere; only the entry being written is upgraded to the
+// object form, so existing files keep working and untouched entries keep
+// their original representation.
+function normalizeContextTokenEntry(value) {
+  if (typeof value === "string" && value) {
+    return { token: value, updatedAt: undefined };
+  }
+  if (value && typeof value === "object" && typeof value.token === "string" && value.token) {
+    const updatedAt = typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt))
+      ? value.updatedAt
+      : undefined;
+    return { token: value.token, updatedAt };
+  }
+  return undefined;
+}
+
+export async function readContextTokenEntries(stateDir, accountId) {
+  const raw = await readContextTokensRaw(stateDir, accountId);
+  const entries = {};
+  for (const [userId, value] of Object.entries(raw ?? {})) {
+    const entry = normalizeContextTokenEntry(value);
+    if (entry) {
+      entries[userId] = entry;
+    }
+  }
+  return entries;
 }
 
 export async function writeContextTokens(stateDir, accountId, tokens) {
@@ -16,8 +53,11 @@ export async function writeContextTokens(stateDir, accountId, tokens) {
 }
 
 async function rememberContextTokenUnlocked(stateDir, accountId, userId, contextToken) {
-  const tokens = await readContextTokens(stateDir, accountId);
-  tokens[String(userId)] = String(contextToken);
+  const tokens = await readContextTokensRaw(stateDir, accountId);
+  tokens[String(userId)] = {
+    token: String(contextToken),
+    updatedAt: new Date().toISOString()
+  };
   await writeContextTokens(stateDir, accountId, tokens);
 }
 
@@ -34,9 +74,58 @@ export async function rememberContextToken(stateDir, accountId, userId, contextT
   await withAccountLock(stateDir, accountId, () => rememberContextTokenUnlocked(stateDir, accountId, userId, contextToken));
 }
 
+// Token selection fallback chain for sends: a token freshly learned from
+// the latest inbound message is remembered by rememberContextToken (and
+// re-resolved by the typing helper), so the stored entry is always the
+// freshest known token for the user; when no entry exists the send fails
+// with NO_CONTEXT_TOKEN.
 export async function resolveContextToken(stateDir, accountId, userId) {
-  const tokens = await readContextTokens(stateDir, accountId);
-  return tokens[String(userId)];
+  const entries = await readContextTokenEntries(stateDir, accountId);
+  return entries[String(userId)]?.token;
+}
+
+function tokenAgeSeconds(entry, now = Date.now()) {
+  if (!entry?.updatedAt) {
+    return undefined;
+  }
+  const recordedMs = Date.parse(entry.updatedAt);
+  if (!Number.isFinite(recordedMs)) {
+    return undefined;
+  }
+  return Math.max(0, Math.floor((now - recordedMs) / 1000));
+}
+
+export async function getContextTokenInfo(stateDir, accountId, userId) {
+  const entries = await readContextTokenEntries(stateDir, accountId);
+  const entry = entries[String(userId)];
+  if (!entry) {
+    return undefined;
+  }
+  return {
+    token: entry.token,
+    ...(entry.updatedAt ? { updatedAt: entry.updatedAt } : {}),
+    ...(tokenAgeSeconds(entry) !== undefined ? { ageSeconds: tokenAgeSeconds(entry) } : {})
+  };
+}
+
+// Describes a token value for error reporting: when it matches the stored
+// record, its age is known and its source is "stored"; a caller-provided
+// token the bridge has no record of is "explicit" with unknown age; no
+// token at all is "none".
+export async function describeContextToken(stateDir, accountId, userId, tokenValue) {
+  if (!tokenValue) {
+    return { source: "none" };
+  }
+  const entries = await readContextTokenEntries(stateDir, accountId);
+  const entry = entries[String(userId)];
+  if (entry && entry.token === tokenValue) {
+    const ageSeconds = tokenAgeSeconds(entry);
+    return {
+      source: "stored",
+      ...(ageSeconds !== undefined ? { ageSeconds } : {})
+    };
+  }
+  return { source: "explicit" };
 }
 
 // Per-token successful-send accounting. iLink enforces a per-context-token
