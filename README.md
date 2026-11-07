@@ -60,6 +60,16 @@ WeChat-iLink Bridge（`wxb`）是一个面向 AI Agent 的微信 iLink 本地桥
 - helper 失败不会修改 cursor、seen ID、context token 或消息历史。
 - 使用说明见 `docs/m15-multimodal-helper.md`。
 
+## Patched 版新增（基于原版 cherry-pick lyrnoxfan Fork 的 5 个提交）
+
+- `wxb send --voice <path>`：发送语音消息，支持 mp3/wav/m4a/amr/ogg/silk。非 SILK 音频会自动转码为 SILK 并带上时长（`voice_item.playtime`）。
+- 语音转码依赖外部工具，缺一不可：`ffmpeg`、`ffprobe` 在 PATH 中；SILK 编码器按以下顺序查找（原 Fork 写死的是作者本机路径，已修复）：
+  1. 配置 `--silk-encoder-path <path>` / 环境变量 `WX_SILK_ENCODER_PATH` / `.env`
+  2. PATH 中的 `silk-encoder`（或 `silk_encoder`）
+  找不到时返回结构化错误 `SILK_ENCODER_NOT_FOUND` 并说明配置方法；已是 `.silk` 的文件不转码、不需要上述工具。
+- `fetch` 长轮询不再全程持有账号锁：轮询期间并发 `send` 不再报 `STATE_LOCK_TIMEOUT`（前提：单轮询器部署，不要多进程同时 fetch 同一账号）。
+- 账号锁可回收残留死锁：进程被杀死后留下的 `.lock` 文件会按 PID 存活状态自动回收，不再永久超时。
+
 ## 从源码安装
 
 Windows PowerShell：
@@ -175,6 +185,7 @@ node .\src\cli\index.js --base-url "https://ilinkai.weixin.qq.com" fetch --json
 | `WX_ATTACHMENT_RETENTION_DAYS` | `--attachment-retention-days` | cleanup inbox 附件保留天数 |
 | `WX_MAX_HISTORY_MESSAGES` | `--max-history-messages` | cleanup 每账号最多保留消息条数 |
 | `WX_MAX_UPLOAD_BYTES` | `--max-upload-bytes` | 单个发送文件最大字节数，默认 25 MiB |
+| `WX_SILK_ENCODER_PATH` | `--silk-encoder-path` | SILK 编码器可执行文件路径（发送非 SILK 语音时需要）；不设时在 PATH 中查找 `silk-encoder` |
 
 默认状态目录：
 

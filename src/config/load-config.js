@@ -21,6 +21,7 @@ const envKeyByConfigKey = Object.freeze({
   attachmentRetentionDays: "WX_ATTACHMENT_RETENTION_DAYS",
   maxHistoryMessages: "WX_MAX_HISTORY_MESSAGES",
   maxUploadBytes: "WX_MAX_UPLOAD_BYTES",
+  silkEncoderPath: "WX_SILK_ENCODER_PATH",
   botUserName: "BOT_USER_NAME"
 });
 

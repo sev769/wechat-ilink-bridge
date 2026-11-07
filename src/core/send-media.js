@@ -51,7 +51,52 @@ function inferMimeType(filePath) {
 }
 
 const execFileAsync = promisify(execFile);
-const SILK_ENCODER = "/home/hatch/workspace/silk-tools/encoder";
+
+// Patched (was a hardcoded personal path in the lyrnoxfan fork):
+// the SILK encoder is resolved, in order, from
+//   1. config.silkEncoderPath (--silk-encoder-path / WX_SILK_ENCODER_PATH / .env)
+//   2. a `silk-encoder` (or `silk_encoder`) executable found on PATH
+// Converting voice also needs `ffmpeg` and `ffprobe` on PATH.
+const SILK_ENCODER_CANDIDATES = Object.freeze(["silk-encoder", "silk_encoder"]);
+
+async function isFile(filePath) {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveSilkEncoder(config = {}, env = process.env) {
+  const configured = config.silkEncoderPath ?? env.WX_SILK_ENCODER_PATH;
+  if (configured) {
+    if (await isFile(configured)) {
+      return configured;
+    }
+    throw new WxbError("SILK_ENCODER_NOT_FOUND", `Configured SILK encoder does not exist: ${configured}`, {
+      retryable: false,
+      details: { silkEncoderPath: configured }
+    });
+  }
+
+  const extensions = process.platform === "win32" ? [".exe", ".bat", ".cmd", ""] : [""];
+  for (const dir of (env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
+    for (const name of SILK_ENCODER_CANDIDATES) {
+      for (const ext of extensions) {
+        const candidate = path.join(dir, `${name}${ext}`);
+        if (await isFile(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  throw new WxbError(
+    "SILK_ENCODER_NOT_FOUND",
+    "Sending a non-SILK voice message requires a SILK encoder. Install a silk-v3 encoder, put `silk-encoder` on PATH, or set WX_SILK_ENCODER_PATH / --silk-encoder-path to its location. `ffmpeg` and `ffprobe` must also be on PATH.",
+    { retryable: false }
+  );
+}
 
 async function getAudioDurationMs(filePath) {
   try {
@@ -66,12 +111,22 @@ async function getAudioDurationMs(filePath) {
   }
 }
 
-async function convertToSilk(inputPath) {
+async function convertToSilk(inputPath, config = {}) {
+  const encoder = await resolveSilkEncoder(config);
   const tmpPcm = path.join(os.tmpdir(), `silk-${Date.now()}-${Math.random().toString(36).slice(2)}.pcm`);
   const tmpSilk = path.join(os.tmpdir(), `silk-${Date.now()}-${Math.random().toString(36).slice(2)}.silk`);
   try {
-    await execFileAsync("ffmpeg", ["-y", "-loglevel", "error", "-i", inputPath, "-ar", "24000", "-ac", "1", "-f", "s16le", tmpPcm]);
-    await execFileAsync(SILK_ENCODER, [tmpPcm, tmpSilk, "-rate", "24000"]);
+    try {
+      await execFileAsync("ffmpeg", ["-y", "-loglevel", "error", "-i", inputPath, "-ar", "24000", "-ac", "1", "-f", "s16le", tmpPcm]);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        throw new WxbError("FFMPEG_NOT_FOUND", "Sending a non-SILK voice message requires `ffmpeg` on PATH to decode the audio before SILK encoding.", {
+          retryable: false
+        });
+      }
+      throw error;
+    }
+    await execFileAsync(encoder, [tmpPcm, tmpSilk, "-rate", "24000"]);
     const bytes = await readFile(tmpSilk);
     return bytes;
   } finally {
@@ -223,7 +278,7 @@ async function inspectLocalMedia(filePath, kind, config = {}) {
   if (kind === "voice") {
     durationMs = await getAudioDurationMs(absolutePath);
     if (!isSilkFile(absolutePath, bytes)) {
-      finalBytes = await convertToSilk(absolutePath);
+      finalBytes = await convertToSilk(absolutePath, config);
       finalFileName = finalFileName.replace(/\.[^.]+$/, "") + ".silk";
     }
   }
