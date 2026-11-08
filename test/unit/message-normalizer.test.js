@@ -166,15 +166,15 @@ test("surfaces ref_msg as quote with the quoted message server id and create tim
   const normalized = normalizeUpdateResponse(raw);
   const [message] = normalized.messages;
 
-  assert.equal(message.id, "7524945285671009000");
+  assert.equal(message.id, "7434945285671009000");
   assert.equal(message.type, "text");
   assert.equal(message.text, "1");
   assert.deepEqual(message.quote, {
-    messageId: "7524943367072022152",
+    messageId: "7434943367072022152",
     createTimeMs: 1794086306000
   });
   assert.deepEqual(message.items[0].quote, {
-    messageId: "7524943367072022152",
+    messageId: "7434943367072022152",
     createTimeMs: 1794086306000
   });
 });

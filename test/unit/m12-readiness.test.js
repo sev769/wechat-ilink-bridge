@@ -20,11 +20,12 @@ test("M12 validation report records beta package install smoke", async () => {
   assert.match(report, /--otp <one-time-code>/);
 });
 
-test("README documents beta tag and local tarball install paths", async () => {
+test("README documents integrated install paths", async () => {
   const readme = await readFile("README.md", "utf8");
 
-  assert.match(readme, /npm Beta 安装/);
-  assert.match(readme, /npm\.cmd install -g @dongh4o\/wechat-ilink-bridge@beta/);
-  assert.match(readme, /dongh4o-wechat-ilink-bridge-0\.2\.0\.tgz/);
-  assert.match(readme, /已可通过 `@dongh4o\/wechat-ilink-bridge@beta` 安装/);
+  assert.match(readme, /快速开始/);
+  assert.match(readme, /\.\/install\.sh/);
+  assert.match(readme, /npm install -g \./);
+  assert.match(readme, /版本：0\.2\.1/);
+  assert.match(readme, /SILK 编码器/);
 });

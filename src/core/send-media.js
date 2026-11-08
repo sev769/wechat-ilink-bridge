@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
 import { WxbError } from "./errors.js";
-import { generateClientId, IlinkClient, maybeCaptureRawSendResponse, pickServerMessageId } from "./ilink-client.js";
+import { generateClientId, IlinkClient, pickServerMessageId } from "./ilink-client.js";
 import { outgoingItemTypes, protocolDefaults, uploadMediaTypes } from "./protocol-constants.js";
 import { resolveSendAccount, resolveTargetUserOrAlias } from "./send-text.js";
 import { sanitizeAttachmentFileName } from "./media-download.js";
@@ -522,7 +522,6 @@ export async function sendMedia(options = {}) {
       // Record the server-assigned message id (when the send response
       // carries one) in the quote cache as a kind/fileName placeholder, so
       // a later ref_msg pointing at this media message can be resolved.
-      await maybeCaptureRawSendResponse(stateDir, { kind: "sendMedia", clientId, response: sendResponse });
       const serverMessageId = pickServerMessageId(sendResponse, clientId);
       if (serverMessageId) {
         await cacheQuoteSummaries(stateDir, account.accountId, [summarizeForQuoteCache({

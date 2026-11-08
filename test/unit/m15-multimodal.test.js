@@ -170,8 +170,13 @@ test("M15 docs describe optional helper boundaries and validation", async () => 
 
   for (const content of [readme, helperDoc, validationReport, apiReference]) {
     assert.match(content, /analyzeMedia/);
+  }
+
+  for (const content of [helperDoc, validationReport, apiReference]) {
     assert.match(content, /MULTIMODAL_HELPER_UNAVAILABLE/);
   }
+
+  assert.match(readme, /docs\/m15-multimodal-helper\.md/);
 
   assert.match(helperDoc, /No optional multimodal helper is configured/);
   assert.match(validationReport, /不需要模型 API key/);

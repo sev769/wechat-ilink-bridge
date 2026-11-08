@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("package metadata marks the M15 P2 release candidate", async () => {
+test("package metadata marks the 0.2.1 integrated release", async () => {
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
 
   assert.equal(manifest.name, "@dongh4o/wechat-ilink-bridge");
-  assert.equal(manifest.version, "0.2.0");
+  assert.equal(manifest.version, "0.2.1");
   assert.equal(manifest.private, false);
   assert.equal(manifest.license, "MIT");
   assert.equal(manifest.bin.wxb, "src/cli/index.js");
@@ -19,44 +19,29 @@ test("package metadata marks the M15 P2 release candidate", async () => {
   assert.match(manifest.repository.url, /github\.com\/DONGH4O\/wechat-ilink-bridge/);
   assert.match(manifest.bugs.url, /github\.com\/DONGH4O\/wechat-ilink-bridge\/issues/);
   assert.match(manifest.homepage, /github\.com\/DONGH4O\/wechat-ilink-bridge#readme/);
-  for (const requiredFile of ["src/", "skills/", "docs/", "README.md", "CHANGELOG.md", "LICENSE"]) {
+  for (const requiredFile of ["src/", "skills/", "docs/", "extras/", "third_party/", "install.sh", "README.md", "CHANGELOG.md", "LICENSE"]) {
     assert.ok(manifest.files.includes(requiredFile), `${requiredFile} must be packed`);
   }
   assert.equal(manifest.files.includes("scripts/"), false);
 });
 
-test("README documents Windows usage and M9 release expectations", async () => {
+test("README documents integrated usage and release expectations", async () => {
   const readme = await readFile("README.md", "utf8");
 
-  assert.match(readme, /Windows PowerShell/);
-  assert.match(readme, /\$env:WX_STATE_DIR="C:\\tmp\\wxb-test"/);
-  assert.match(readme, /npm\.cmd test/);
-  assert.match(readme, /npm\.cmd run pack:dry-run/);
-  assert.match(readme, /login --json/);
-  assert.match(readme, /fetch --timeout 1000 --json/);
-  assert.match(readme, /fetch --timeout 3000 --download-media --json/);
-  assert.match(readme, /send --user <fromUserId> --text "收到" --json/);
-  assert.match(readme, /poll --limit 3 --interval 1000 --json/);
-  assert.match(readme, /heartbeat --json/);
-  assert.match(readme, /alias set <fromUserId> "张三"/);
-  assert.match(readme, /cleanup --dry-run --json/);
-  assert.match(readme, /fetch --download-media/);
-  assert.match(readme, /attachments/);
-  assert.match(readme, /inbox/);
+  assert.match(readme, /版本：0\.2\.1/);
+  assert.match(readme, /个人自用/);
+  assert.match(readme, /快速开始/);
+  assert.match(readme, /\.\/install\.sh/);
+  assert.match(readme, /npm install -g \./);
+  assert.match(readme, /wxb login --json/);
+  assert.match(readme, /命令速查/);
+  assert.match(readme, /queue retry/);
   assert.match(readme, /延迟补发队列/);
-  assert.match(readme, /空格或中文/);
-  assert.match(readme, /恢复提示/);
-  assert.match(readme, /NO_CONTEXT_TOKEN/);
+  assert.match(readme, /INVALID_CONTEXT_TOKEN/);
   assert.match(readme, /SESSION_EXPIRED/);
-  assert.match(readme, /0\.1\.0-beta\.1/);
-  assert.match(readme, /已可通过 `@dongh4o\/wechat-ilink-bridge@beta` 安装/);
-  assert.match(readme, /npm\.cmd install -g @dongh4o\/wechat-ilink-bridge@beta/);
-  assert.match(readme, /dongh4o-wechat-ilink-bridge-0\.2\.0\.tgz/);
-  assert.match(readme, /@dongh4o\/wechat-ilink-bridge/);
   assert.match(readme, /DONGH4O\/wechat-ilink-bridge/);
   assert.match(readme, /LICENSE/);
-  assert.match(readme, /公开稳定 CLI bin `wxb` 和 P2 MCP adapter bin `wxb-mcp`/);
-  assert.match(readme, /`wxb-spike` 不作为公开 bin 发布/);
+  assert.match(readme, /安全须知/);
   assert.match(readme, /完整 token/);
 });
 

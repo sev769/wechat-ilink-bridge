@@ -58,7 +58,7 @@ test("README and release process link stable readiness guidance", async () => {
     readFile("CHANGELOG.md", "utf8")
   ]);
 
-  assert.match(readme, /稳定版准备状态/);
+  assert.match(readme, /已知限制/);
   assert.match(readme, /docs\/troubleshooting\.md/);
   assert.match(releaseProcess, /Stable release checklist/);
   assert.match(releaseProcess, /git tag v0\.1\.0/);

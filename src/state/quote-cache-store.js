@@ -130,8 +130,8 @@ export async function getQuoteSummary(stateDir, accountId, serverMessageId) {
 
 // The server msg_id handed back in a sendmessage response is NOT the id a
 // later ref_msg points at: measured pairs (response id -> ref id) are
-// 7524957599004039000 -> 7524957599004038792, 7524958399143069000 ->
-// 7524958399143068936, and 7524961003499663000 -> 7524961003499663752. The
+// 7434957599004039000 -> 7434957599004038792, 7434958399143069000 ->
+// 7434958399143068936, and 7434961003499663000 -> 7434961003499663752. The
 // two ids are always numerically close (delta <= ~1000) and the quoted
 // message's server create_time_ms is within ~3s of the locally recorded
 // timestamp, but the delta's sign and size vary and a pair can straddle any

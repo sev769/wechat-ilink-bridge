@@ -1,6 +1,6 @@
 {
   "name": "@dongh4o/wechat-ilink-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": false,
   "type": "module",
   "description": "Local WeChat iLink Bridge CLI for Agent-safe fetch, send, state, and media handoff workflows.",
@@ -19,6 +19,9 @@
     "src/",
     "skills/",
     "docs/",
+    "extras/",
+    "third_party/",
+    "install.sh",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

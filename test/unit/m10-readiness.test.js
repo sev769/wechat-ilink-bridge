@@ -2,21 +2,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("README documents M10 source installation and public repository safety", async () => {
+test("README documents integrated source installation and public repository safety", async () => {
   const readme = await readFile("README.md", "utf8");
 
-  assert.match(readme, /当前源码版本为 `0\.2\.0`/);
-  assert.match(readme, /当前 npm 已发布版本仍为 M12 beta/);
-  assert.match(readme, /M13 稳定版候选准备已完成/);
-  assert.match(readme, /actions\/workflows\/ci\.yml\/badge\.svg/);
-  assert.match(readme, /git clone https:\/\/github\.com\/DONGH4O\/wechat-ilink-bridge\.git/);
-  assert.match(readme, /node \.\\src\\cli\\index\.js help/);
-  assert.match(readme, /node \.\/src\/cli\/index\.js help/);
-  assert.match(readme, /npm\.cmd install -g \./);
+  assert.match(readme, /版本：0\.2\.1/);
+  assert.match(readme, /快速开始/);
+  assert.match(readme, /\.\/install\.sh/);
+  assert.match(readme, /npm install -g \./);
   assert.match(readme, /%LOCALAPPDATA%\\wxb/);
   assert.match(readme, /~\/Library\/Application Support\/wxb/);
   assert.match(readme, /\$\{XDG_DATA_HOME:-~\/\.local\/share\}\/wxb/);
-  assert.match(readme, /公开 issue、PR、日志或截图前/);
+  assert.match(readme, /安全须知/);
+  assert.match(readme, /公开分享日志、截图、issue 前/);
+  assert.match(readme, /pack:dry-run/);
 });
 
 test("GitHub community files set token-safe contribution boundaries", async () => {

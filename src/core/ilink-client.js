@@ -1,6 +1,4 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { appendFile, stat } from "node:fs/promises";
-import { join } from "node:path";
 import {
   authHeaders,
   endpoints,
@@ -32,22 +30,6 @@ export function generateClientId(now = Date.now()) {
 // experiments; sibling shapes are tolerated). Returns undefined when the
 // response has no usable id, or when the only candidate is an echo of the
 // client_id we sent (which is not a server id).
-// Diagnostic only: when the flag file <stateDir>/raw-capture.on exists, append
-// each raw sendmessage response to <stateDir>/raw-send-capture.jsonl so the
-// response's id fields can be inspected. Passive; never breaks sending.
-export async function maybeCaptureRawSendResponse(stateDir, payload) {
-  try {
-    await stat(join(stateDir, "raw-capture.on"));
-    await appendFile(
-      join(stateDir, "raw-send-capture.jsonl"),
-      `${JSON.stringify({ capturedAt: Date.now(), ...payload })}\n`,
-      "utf8"
-    );
-  } catch {
-    // Never let a diagnostic write break sending.
-  }
-}
-
 export function pickServerMessageId(response, clientId) {  const candidates = [
     response?.message_id,
     response?.msg_id,
