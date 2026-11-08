@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("package metadata marks the 0.2.1 integrated release", async () => {
+test("package metadata marks the 0.2.2 integrated release", async () => {
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
 
   assert.equal(manifest.name, "@dongh4o/wechat-ilink-bridge");
-  assert.equal(manifest.version, "0.2.1");
+  assert.equal(manifest.version, "0.2.2");
   assert.equal(manifest.private, false);
   assert.equal(manifest.license, "MIT");
   assert.equal(manifest.bin.wxb, "src/cli/index.js");
@@ -28,7 +28,7 @@ test("package metadata marks the 0.2.1 integrated release", async () => {
 test("README documents integrated usage and release expectations", async () => {
   const readme = await readFile("README.md", "utf8");
 
-  assert.match(readme, /版本：0\.2\.1/);
+  assert.match(readme, /版本：0\.2\.2/);
   assert.match(readme, /个人自用/);
   assert.match(readme, /快速开始/);
   assert.match(readme, /\.\/install\.sh/);

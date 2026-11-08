@@ -8,6 +8,12 @@ This project follows semantic versioning after the first public package. Pre-`0.
 
 - No changes yet.
 
+## 0.2.2 - 2026-11-09
+
+Documentation-only release on top of 0.2.1 — no code changes; the bump exists so the packaged download carries the new guide.
+
+- Added a measured "token economy" pitfall guide for deployers and their AI agents — main README (extras section), `extras/wxb-inbox/README.md`, and `docs/auto-reply-worker.md` — covering why auto-reply must run as a fresh short-lived worker instead of in a long-lived main chat, script-only polling, read-pending-once, conditional pre-send recheck, no sub-agents per message, and merged sends. The sample worker prompt in `extras/wxb-inbox/wxb-inbox.json` now opens with these as hard rules for the on-duty agent.
+
 ## 0.2.1 - 2026-11-08
 
 Integrated build for Muse (personal use, provided as-is — see README "关于本版本"), assembled on top of upstream 0.2.0 (DONGH4O). All changes below were verified live on the maintainer's own account.

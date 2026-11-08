@@ -26,6 +26,6 @@ test("README documents integrated install paths", async () => {
   assert.match(readme, /快速开始/);
   assert.match(readme, /\.\/install\.sh/);
   assert.match(readme, /npm install -g \./);
-  assert.match(readme, /版本：0\.2\.1/);
+  assert.match(readme, /版本：0\.2\.2/);
   assert.match(readme, /SILK 编码器/);
 });
